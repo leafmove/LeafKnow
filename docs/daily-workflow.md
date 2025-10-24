@@ -5,6 +5,7 @@
 ### 对于协作者（朋友们）
 
 #### 1. 第一次设置
+
 ```bash
 # 克隆仓库
 git clone https://github.com/leafmove/LeafKnow.git
@@ -19,6 +20,7 @@ git branch -a
 ```
 
 #### 2. 开始新功能开发
+
 ```bash
 # 切换到主分支并获取最新代码
 git checkout main
@@ -36,29 +38,41 @@ git commit -m "feat: 添加用户登录功能"
 git push origin zhangsan/user-login-feature
 ```
 
-#### 3. 创建Pull Request
-1. 访问：https://github.com/leafmove/LeafKnow
+#### 3. 日常开发和编译
+
+bun run dev
+bun run build
+bun tauri dev
+bun tauri build
+
+#### 4. 创建Pull Request
+
+1. 访问：[https://github.com/leafmove/LeafKnow](https://github.com/leafmove/LeafKnow)
 2. 你会看到一个黄色的横幅，点击"Compare & pull request"
 3. 填写PR标题和描述：
    - 标题：简要说明你做了什么
    - 描述：详细说明功能实现、测试情况等
 4. 点击"Create pull request"
 
-#### 4. 等待审查和修改
+#### 5. 等待审查和修改
+
 - 项目负责人会审查你的代码
 - 如果需要修改，在PR中会看到评论
 - 修改代码后，再次推送到你的分支：
+
   ```bash
   # 修改代码
   git add .
   git commit -m "fix: 修复登录验证问题"
   git push origin zhangsan/user-login-feature
   ```
+
 - PR会自动更新
 
 ### 对于项目负责人（你）
 
 #### 1. 审查Pull Request
+
 1. 访问GitHub仓库的"Pull requests"页面
 2. 点击进入具体的PR
 3. 检查：
@@ -72,6 +86,7 @@ git push origin zhangsan/user-login-feature
    - 批准PR
 
 #### 2. 合并Pull Request
+
 1. 审查通过后，在PR页面点击"Merge pull request"
 2. 选择合并方式：
    - **Create a merge commit**（推荐）：保留完整历史
@@ -80,6 +95,7 @@ git push origin zhangsan/user-login-feature
 3. 点击"Confirm merge"
 
 #### 3. 清理分支
+
 ```bash
 # 删除已合并的分支（可选）
 git branch -d zhangsan/user-login-feature
@@ -89,6 +105,7 @@ git push origin --delete zhangsan/user-login-feature
 ## 常用Git命令参考
 
 ### 基本操作
+
 ```bash
 # 查看当前状态
 git status
@@ -104,6 +121,7 @@ git checkout 分支名
 ```
 
 ### 提交和推送
+
 ```bash
 # 添加所有修改
 git add .
@@ -119,6 +137,7 @@ git push origin 分支名
 ```
 
 ### 与远程仓库同步
+
 ```bash
 # 获取远程仓库更新
 git fetch origin
@@ -133,6 +152,7 @@ git remote -v
 ## 提交信息规范
 
 使用以下前缀来描述提交类型：
+
 - `feat:` 新功能
 - `fix:` 修复bug
 - `docs:` 文档更新
@@ -144,6 +164,7 @@ git remote -v
 ## 问题排查
 
 ### 冲突解决
+
 ```bash
 # 如果pull时遇到冲突
 git pull origin main
@@ -154,6 +175,7 @@ git push
 ```
 
 ### 撤销操作
+
 ```bash
 # 撤销最后一次提交（保留修改）
 git reset --soft HEAD~1
