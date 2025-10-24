@@ -14,7 +14,7 @@ LeafKnow 是一个知识管理平台，采用前后端分离架构：
 ## 📋 系统要求
 
 ### 必需软件
-- **Python**: >= 3.13 ⚠️ (当前系统: 3.8.10，需要升级)
+- **Python**: >= 3.10 ⚠️ (当前系统: 3.8.10，需要升级)
 - **Node.js**: >= 18.0.0 ✅ (当前: 20.18.1)
 - **Rust**: >= 1.70.0 ❌ (未安装)
 - **UV**: >= 0.5.0 ✅ (当前: 0.6.13)
@@ -28,24 +28,24 @@ LeafKnow 是一个知识管理平台，采用前后端分离架构：
 ## 🔧 环境准备
 
 ### 1. 升级Python (重要)
-当前Python版本(3.8.10)不符合要求，需要升级到3.13+：
+当前Python版本(3.8.10)不符合要求，需要升级到3.10+：
 
 #### Windows:
 ```bash
 # 方法1: 从官网下载安装包
-# 访问 https://www.python.org/downloads/ 下载Python 3.13+
+# 访问 https://www.python.org/downloads/ 下载Python 3.10+
 
 # 方法2: 使用winget
-winget install Python.Python.3.13
+winget install Python.Python.3.11
 
 # 方法3: 使用Anaconda
-conda install python=3.13
+conda install python=3.11
 ```
 
 #### 验证安装:
 ```bash
-python --version  # 应该显示 Python 3.13.x
-python3 --version  # 应该显示 Python 3.13.x
+python --version  # 应该显示 Python 3.10.x 或更高版本
+python3 --version  # 应该显示 Python 3.10.x 或更高版本
 ```
 
 ### 2. 安装Rust
