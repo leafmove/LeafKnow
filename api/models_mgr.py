@@ -27,82 +27,8 @@ from models_builtin import load_embedding_model
 from memory_mgr import MemoryMgr
 from tool_provider import ToolProvider
 from huggingface_hub import snapshot_download
-from tqdm import tqdm
 
 logger = logging.getLogger()
-
-# 定义一个可以在运行时创建的 BridgeProgressReporter 类
-def create_bridge_progress_reporter(bridge_events, model_name):
-    """
-    动态创建带有bridge events的tqdm子类
-    
-    这个工厂函数解决了在类方法内部创建子类时的作用域问题。
-    """    
-    class BridgeProgressReporter(tqdm):
-        """
-        继承自真正的tqdm类，确保完全兼容
-        """
-        
-        def __init__(self, *args, **kwargs):
-            # 注入我们的自定义参数
-            self.bridge_events = bridge_events
-            self.model_name = model_name
-            
-            # 调用父类初始化
-            super().__init__(*args, **kwargs)
-            
-            # 发送开始事件
-            if self.bridge_events and not self.disable:
-                self.bridge_events.model_download_progress(
-                    model_name=self.model_name,
-                    current=0,
-                    total=self.total or 0,
-                    message=f"开始下载 {self.model_name}",
-                    stage="downloading"
-                )
-        
-        def update(self, n=1):
-            """重写update方法，添加bridge events"""
-            # 调用父类的update方法
-            result = super().update(n)
-            
-            # 发送进度事件
-            if self.bridge_events and not self.disable:
-                # 格式化消息
-                if self.unit_scale and self.unit == 'B':
-                    # 自动缩放字节单位
-                    current_mb = self.n / (1024 * 1024)
-                    total_mb = self.total / (1024 * 1024) if self.total and self.total > 0 else 0
-                    message = f"{self.desc}: {current_mb:.1f}MB/{total_mb:.1f}MB"
-                else:
-                    message = f"{self.desc}: {self.n}/{self.total or '?'}"
-                
-                self.bridge_events.model_download_progress(
-                    model_name=self.model_name,
-                    current=self.n,
-                    total=self.total or 0,
-                    message=message,
-                    stage="downloading"
-                )
-            
-            return result
-        
-        def close(self):
-            """重写close方法，发送完成事件"""
-            # 发送完成事件
-            if self.bridge_events and not self.disable:
-                self.bridge_events.model_download_progress(
-                    model_name=self.model_name,
-                    current=self.n,
-                    total=self.total or self.n,
-                    message=f"{self.model_name} 下载完成",
-                    stage="completed"
-                )
-            
-            # 调用父类的close方法
-            return super().close()
-    
-    return BridgeProgressReporter
 
 @singleton
 class ModelsMgr:
@@ -919,51 +845,25 @@ Generate a title that best represents what this conversation will be about. Avoi
         for endpoint in endpoints:
             for attempt in range(max_attempts_per_endpoint):
                 try:
-                    # 使用工厂函数创建自定义的tqdm子类
-                    ProgressReporter = create_bridge_progress_reporter(
-                        bridge_events=self.bridge_events,
-                        model_name=model_id
-                    )            
                     # 使用snapshot_download下载模型
                     local_path = snapshot_download(
                         repo_id=model_id,
                         cache_dir=cache_dir,
-                        tqdm_class=ProgressReporter,
                         allow_patterns=["*.safetensors", "*.json", "*.txt"],  # 只下载需要的文件
                         endpoint=endpoint, # 添加endpoint参数
-                    )
-                    # 发送完成事件
-                    self.bridge_events.model_download_completed(
-                        model_name=model_id,
-                        local_path=local_path,
-                        message=f"模型 {model_id} 下载完成"
                     )
                     return local_path
                 except Exception as e:
                     last_exception = e
                     error_msg = f"下载模型失败 (尝试 {attempt + 1}/{max_attempts_per_endpoint}，镜像站: {endpoint}): {str(e)}"
                     logger.warning(f"下载模型 {model_id} 失败: {e}", exc_info=True)
-                    # 发送失败事件，但不是最终失败，只是单次尝试失败
-                    self.bridge_events.model_download_progress(
-                        model_name=model_id,
-                        current=0,
-                        total=0,
-                        message=f"下载失败 (尝试 {attempt + 1}/{max_attempts_per_endpoint}，镜像站: {endpoint})",
-                        stage="failed_attempt"
-                    )
                     time.sleep(2) # 等待2秒后重试
 
             logger.error(f"镜像站 {endpoint} 下载模型 {model_id} 失败，已达到最大重试次数 {max_attempts_per_endpoint}。")
 
         # 如果所有镜像站和所有尝试都失败了
         error_msg = f"所有镜像站下载模型 {model_id} 均失败: {str(last_exception)}"
-        logger.error(error_msg, exc_info=True)
-        # 发送最终失败事件
-        self.bridge_events.model_download_failed(
-            model_name=model_id,
-            error_message=error_msg,
-            details={"exception_type": type(last_exception).__name__ if last_exception else "UnknownError"}
-        )            
+        logger.error(error_msg, exc_info=True)           
         return ""
 
     def _get_rag_context(self, session_id: int, user_query: str, available_tokens: int) -> tuple[str, list]:
@@ -1064,27 +964,6 @@ Generate a title that best represents what this conversation will be about. Avoi
         try:
             if not rag_sources:
                 return
-                
-            # 构建发送给观察窗的数据
-            observation_data = {
-                "timestamp": int(time.time() * 1000),
-                "query": user_query[:200],  # 限制查询长度
-                "sources_count": len(rag_sources),
-                "sources": [
-                    {
-                        "file_path": source.get('file_path', ''),
-                        "similarity_score": round(source.get('similarity_score', 0.0), 3),
-                        "content_preview": source.get('content', '')[:300],  # 内容预览
-                        "chunk_id": source.get('chunk_id'),
-                        "metadata": source.get('metadata', {})
-                    }
-                    for source in rag_sources
-                ],
-                "event_type": "rag_retrieval"
-            }
-            
-            # 通过桥接器发送事件
-            self.bridge_events.send_event("rag-retrieval-result", observation_data)
             
             logger.debug(f"RAG观察数据已发送: {len(rag_sources)} 个来源")
             

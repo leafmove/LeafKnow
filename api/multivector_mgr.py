@@ -28,12 +28,12 @@ from typing import (
 )
 from sqlmodel import Session, select
 from sqlalchemy import Engine
-from docling.datamodel.base_models import InputFormat
+# from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     PictureDescriptionApiOptions,
     PdfPipelineOptions,
 )
-from docling.document_converter import DocumentConverter, PdfFormatOption
+# from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import (
     DoclingDocument,
     ImageRefMode,
@@ -88,7 +88,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # 模块级函数：用于子进程执行（避免嵌套函数序列化问题）
 # ============================================================================
 
-def _docling_worker_func(file_path: str, ocr_options: dict, use_proxy: bool, proxy_value: str, result_queue):
+def _docling_worker_func(file_path: str, pipeline_options: PdfPipelineOptions, use_proxy: bool, proxy_value: str, result_queue):
     """
     在子进程中运行Docling解析（模块级函数，可被multiprocessing序列化）
     
@@ -100,18 +100,8 @@ def _docling_worker_func(file_path: str, ocr_options: dict, use_proxy: bool, pro
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions, EasyOcrOptions
         import os
         import pickle
-        
-        # 配置OCR
-        pipeline_options = PdfPipelineOptions()
-        if ocr_options.get("do_ocr", False):
-            pipeline_options.do_ocr = True
-            easyocr_options = EasyOcrOptions(
-                lang=ocr_options.get("ocr_lang", ["ch_sim", "en"])
-            )
-            pipeline_options.ocr_options = easyocr_options
         
         # 创建转换器
         converter = DocumentConverter(
@@ -208,7 +198,7 @@ class MultiVectorMgr:
             self.docling_cache_dir = self.data_base_dir / "docling_cache"
             self.docling_cache_dir.mkdir(exist_ok=True)
     
-    def _init_docling_converter(self):
+    def _init_docling_converter(self) -> PdfPipelineOptions:
         """初始化docling文档转换器"""
 
         try:
@@ -221,6 +211,7 @@ class MultiVectorMgr:
 
             # 配置PDF处理选项
             pipeline_options = PdfPipelineOptions()
+            # pipeline_options.artifacts_path = self.data_base_dir
             pipeline_options.generate_picture_images = True
             # pipeline_options.generate_page_images = True
             pipeline_options.images_scale = 2.0  # 图片分辨率scale
@@ -244,15 +235,7 @@ Give a concise summary of the image that is well optimized for retrieval.
                 timeout=180,
             )
             pipeline_options.do_ocr = False  # 关闭OCR，依赖docling内置的简单OCR
-            
-            # 创建文档转换器
-            self.converter = DocumentConverter(format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=pipeline_options,
-                )
-            })
-            
-            logger.info("Docling converter initialized successfully")
+            return pipeline_options
             
         except Exception as e:
             logger.error(f"Failed to initialize docling converter: {e}")
@@ -424,11 +407,7 @@ Give a concise summary of the image that is well optimized for retrieval.
         try:
             logger.info(f"[MULTIVECTOR] Parsing document with docling in subprocess: {file_path}")
             
-            # 准备OCR配置
-            ocr_options = {
-                # "do_ocr": self.do_ocr,
-                # "ocr_lang": self.ocr_lang
-            }
+            pipeline_options = self._init_docling_converter()
             
             # 获取代理配置
             proxy_value = ""
@@ -443,7 +422,7 @@ Give a concise summary of the image that is well optimized for retrieval.
             # 创建并启动子进程（使用模块级函数）
             process = Process(
                 target=_docling_worker_func,
-                args=(file_path, ocr_options, self.use_proxy, proxy_value, result_queue)
+                args=(file_path, pipeline_options, self.use_proxy, proxy_value, result_queue)
             )
             process.daemon = False  # 确保子进程独立运行
             process.start()
