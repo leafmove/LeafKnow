@@ -7,7 +7,12 @@ import os
 import time
 import signal
 import tiktoken
-from typing import Dict, Any
+import av
+import math
+import uuid
+import pathlib
+from typing import Dict, Any, Tuple
+from edge_tts import Communicate
 
 # 为当前模块创建专门的日志器（最佳实践）
 logger = logging.getLogger()
@@ -397,3 +402,52 @@ def remove_json_keys_safely(obj, field_name: str, keys_to_remove: list) -> None:
     
     # 显式标记字段已修改
     attributes.flag_modified(obj, field_name)
+
+async def tts(text: str, base_dir: str) -> Tuple[str, int]:
+    '''
+    use edge-tts to generate tts audio file
+    
+    > uv run edge-tts --list-voices | grep zh                                                    
+    zh-CN-XiaoxiaoNeural               Female    News, Novel            Warm
+    zh-CN-XiaoyiNeural                 Female    Cartoon, Novel         Lively
+    zh-CN-YunjianNeural                Male      Sports, Novel          Passion
+    zh-CN-YunxiNeural                  Male      Novel                  Lively, Sunshine
+    zh-CN-YunxiaNeural                 Male      Cartoon, Novel         Cute
+    zh-CN-YunyangNeural                Male      News                   Professional, Reliable
+    zh-CN-liaoning-XiaobeiNeural       Female    Dialect                Humorous
+    zh-CN-shaanxi-XiaoniNeural         Female    Dialect                Bright
+    zh-HK-HiuGaaiNeural                Female    General                Friendly, Positive
+    zh-HK-HiuMaanNeural                Female    General                Friendly, Positive
+    zh-HK-WanLungNeural                Male      General                Friendly, Positive
+    zh-TW-HsiaoChenNeural              Female    General                Friendly, Positive
+    zh-TW-HsiaoYuNeural                Female    General                Friendly, Positive
+    zh-TW-YunJheNeural                 Male      General                Friendly, Positive
+    '''
+    communicate = Communicate(
+        text=text, 
+        voice="zh-CN-YunxiaNeural",
+        # proxy=PROXIES['http'],
+        )
+    rnd_filename = str(uuid.uuid4())
+    dir_path = pathlib.Path(base_dir) / 'voice_cache'
+    if not os.path.exists(dir_path):
+        os.mkdir(dir_path)
+    raw_audio_file = dir_path / f'{rnd_filename}.mp3'
+    await communicate.save(raw_audio_file.as_posix())
+
+    dur = _get_duration(raw_audio_file.as_posix())
+    print(f"音频时长为{dur}秒: \n{text}")
+    return raw_audio_file.as_posix(), dur
+
+def _get_duration(media_path: str) -> int:
+        """计算媒体文件时长"""
+        # 实践证明280个中文字符，生成的语音大概60秒
+        # with av.open(media_path) as container:
+        #     duration = container.duration / 1000000
+        # return math.ceil(duration)
+        container = av.open(media_path) # type: ignore
+        audio_stream = container.streams.audio[0]  # Assuming there is only one audio stream
+        duration = audio_stream.duration if audio_stream.duration is not None else 1
+        time_base = audio_stream.time_base if audio_stream.time_base is not None else 1
+        duration_seconds = math.ceil(duration * time_base)
+        return duration_seconds

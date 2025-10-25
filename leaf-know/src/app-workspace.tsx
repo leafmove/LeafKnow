@@ -80,84 +80,33 @@ export function AppWorkspace({
       setIsInfiniteCanvasCollapsed(true) // 设置初始状态为收起
     }
   }, [])
-  // 处理无限画布面板的收起/展开
-  const handleCanvasToggle = () => {
-    if (infiniteCanvasPanelRef.current) {
-      if (isInfiniteCanvasCollapsed) {
-        infiniteCanvasPanelRef.current.expand()
-      } else {
-        infiniteCanvasPanelRef.current.collapse()
-      }
-    }
-  }
 
   return (
     <main className="flex flex-row h-full overflow-hidden w-full">
-      <ResizablePanelGroup
-        direction="horizontal"
-        className="w-full"
-      >
-        <ResizablePanel defaultSize={30} minSize={20}>
-          <ResizablePanelGroup direction="vertical">
-            <ResizablePanel defaultSize={70} minSize={20}>
-              {/* 占位div */}
-              <div className="flex flex-col h-full p-1" >
+      <div className="flex flex-col h-full p-1 w-[100px] bg-gray-200" >
 
-              </div>
-            </ResizablePanel>
-            <ResizableHandle withHandle className="bg-primary" />
-            <ResizablePanel defaultSize={30} minSize={20}>
-              <div className="flex flex-col h-full p-1">
-                
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-        <ResizableHandle withHandle className="bg-primary" />
-        <ResizablePanel defaultSize={40} minSize={20}>
-          {/* ChatUI区 */}
-          <div className={`flex flex-col flex-auto h-full overflow-hidden`}>
-            <div className="border-b p-2 flex flex-row h-[50px] relative">
-              <div className="text-md font-semibold text-muted-foreground">
-                {currentSession ? currentSession.name : '新会话'}
-              </div>
-              <div className="absolute bottom-0 right-1 z-10">
-                {/* <PanelRightIcon 
-                  className={`size-7 cursor-pointer hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 rounded-md p-1.5 transition-all ${isInfiniteCanvasCollapsed ? "rotate-180" : ""}`} 
-                  onClick={handleCanvasToggle} /> */}
-              </div>
-            </div>
-            {/* <AiSdkChat 
-              sessionId={sessionId ? String(sessionId) : undefined}
-              currentSession={internalCurrentSession} // 传递内部维护的当前会话数据
-              onCreateSessionFromMessage={onCreateSessionFromMessage}
-              resetTrigger={chatResetTrigger}
-              imagePath={selectedImagePath || undefined} // 传递选中的图片路径
-              imageSelectionKey={imageSelectionCounter} // 传递选择计数器以强制更新
-              onSessionUpdate={onSessionUpdate} // 传递会话更新回调
-              tempSelectedTools={tempSelectedTools} // 传递临时选择的工具
-              onAddTempSelectedTool={onAddTempSelectedTool} // 传递添加临时工具回调
-              onRemoveTempSelectedTool={onRemoveTempSelectedTool} // 传递移除临时工具回调
-            /> */}
+      </div>
+      {/* ChatUI区 */}
+      <div className={`flex flex-col flex-auto h-full overflow-hidden`}>
+        <div className="border-b p-2 flex flex-row h-[50px] relative">
+          <div className="text-md font-semibold text-muted-foreground">
+            {currentSession ? currentSession.name : '新会话'}
           </div>
-        </ResizablePanel>
-        <ResizableHandle className="bg-primary" />
-        <ResizablePanel 
-          ref={infiniteCanvasPanelRef}
-          defaultSize={30} 
-          minSize={10} 
-          collapsible 
-          onCollapse={() => setIsInfiniteCanvasCollapsed(true)}
-          onExpand={() => setIsInfiniteCanvasCollapsed(false)}
-          >
-          {/* 无限画布区 */}
-          <div className={`flex flex-auto w-full bg-background h-full`}>
-            <div className="flex-1">
-              {/* <InfiniteCanvas /> */}
-            </div>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </div>
+        {/* <AiSdkChat 
+          sessionId={sessionId ? String(sessionId) : undefined}
+          currentSession={internalCurrentSession} // 传递内部维护的当前会话数据
+          onCreateSessionFromMessage={onCreateSessionFromMessage}
+          resetTrigger={chatResetTrigger}
+          imagePath={selectedImagePath || undefined} // 传递选中的图片路径
+          imageSelectionKey={imageSelectionCounter} // 传递选择计数器以强制更新
+          onSessionUpdate={onSessionUpdate} // 传递会话更新回调
+          tempSelectedTools={tempSelectedTools} // 传递临时选择的工具
+          onAddTempSelectedTool={onAddTempSelectedTool} // 传递添加临时工具回调
+          onRemoveTempSelectedTool={onRemoveTempSelectedTool} // 传递移除临时工具回调
+        /> */}
+      </div>
+      
     </main>
   )
 }
