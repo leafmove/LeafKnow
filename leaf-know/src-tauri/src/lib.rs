@@ -194,7 +194,7 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|e| e.to_string())?
-                .join("knowledge-focus.db")
+                .join("sqlite.db")
                 .to_string_lossy()
                 .to_string();
             {
