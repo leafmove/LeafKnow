@@ -12,7 +12,7 @@ from typing import List, Dict
 from pydantic_ai import Agent, BinaryContent, RunContext, PromptedOutput
 # from pydantic_ai.usage import UsageLimits
 from model_config_mgr import ModelConfigMgr, ModelUseInterface
-from config import BUILTMODELS
+from config import VLM_MODEL
 import logging
 
 logger = logging.getLogger()
@@ -214,7 +214,7 @@ class ModelCapabilityConfirm:
             agent = Agent(
                 model=model,
                 # mlx_vlm加载模型使用 PromptedOutput 强制 prompt-based 模式，避免 tool calling
-                output_type=PromptedOutput(CityLocation) if model_interface.model_identifier == BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY'] else CityLocation,
+                output_type=PromptedOutput(CityLocation) if model_interface.model_identifier == VLM_MODEL else CityLocation,
             )
             result = await agent.run('Where were the olympics held in 2012?')
             # logger.info(f"Structured output result: {result}")

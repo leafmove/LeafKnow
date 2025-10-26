@@ -12,7 +12,7 @@
 5. 存储到SQLite(元数据)和LanceDB(向量)
 """
 
-from config import singleton, generate_vector_id, BUILTMODELS
+from config import singleton, generate_vector_id, EMBEDDING_MODEL
 import os
 import json
 import hashlib
@@ -28,12 +28,12 @@ from typing import (
 )
 from sqlmodel import Session, select
 from sqlalchemy import Engine
-# from docling.datamodel.base_models import InputFormat
+from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     PictureDescriptionApiOptions,
     PdfPipelineOptions,
 )
-# from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import (
     DoclingDocument,
     ImageRefMode,
@@ -49,37 +49,43 @@ from db_mgr import Document, ParentChunk, ChildChunk, ModelCapability
 from lancedb_mgr import LanceDBMgr
 from models_mgr import ModelsMgr
 from model_config_mgr import ModelConfigMgr
-from multiprocessing import Lock as ProcessLock
-import asyncio
+from bridge_events import BridgeEventSender
+# 强制 PyTorch 使用 CPU
+import torch
+# # 🔒 全局 Metal GPU 互斥锁
+# # 用于确保 Docling (子进程) 和 MLX-VLM (主进程) 不会同时使用 Metal GPU
+# # 关键: 使用 multiprocessing.Lock() 而非 threading.Lock，因为 Docling 运行在子进程中
+# from multiprocessing import Lock as ProcessLock
+# import asyncio
 
 logger = logging.getLogger()
-# 创建进程级锁 (必须在模块级别创建，以便子进程继承)
-_metal_gpu_lock = ProcessLock()
+# # 创建进程级锁 (必须在模块级别创建，以便子进程继承)
+# _metal_gpu_lock = ProcessLock()
 
-def acquire_metal_lock(operation: str):
-    """获取 Metal GPU 锁 (同步版本)"""
-    logger.info(f"[METAL_LOCK] Acquiring lock for: {operation}")
-    _metal_gpu_lock.acquire()
-    logger.info(f"[METAL_LOCK] Lock acquired for: {operation}")
+# def acquire_metal_lock(operation: str):
+#     """获取 Metal GPU 锁 (同步版本)"""
+#     logger.info(f"[METAL_LOCK] Acquiring lock for: {operation}")
+#     _metal_gpu_lock.acquire()
+#     logger.info(f"[METAL_LOCK] Lock acquired for: {operation}")
 
-def release_metal_lock(operation: str):
-    """释放 Metal GPU 锁 (同步版本)"""
-    _metal_gpu_lock.release()
-    logger.info(f"[METAL_LOCK] Lock released for: {operation}")
+# def release_metal_lock(operation: str):
+#     """释放 Metal GPU 锁 (同步版本)"""
+#     _metal_gpu_lock.release()
+#     logger.info(f"[METAL_LOCK] Lock released for: {operation}")
 
-# 异步版本 (用于 async/await 上下文)
-async def acquire_metal_lock_async(operation: str):
-    """获取 Metal GPU 锁 (异步版本)"""
-    logger.info(f"[METAL_LOCK] Acquiring lock for: {operation}")
-    # 在异步上下文中等待锁
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _metal_gpu_lock.acquire)
-    logger.info(f"[METAL_LOCK] Lock acquired for: {operation}")
+# # 异步版本 (用于 async/await 上下文)
+# async def acquire_metal_lock_async(operation: str):
+#     """获取 Metal GPU 锁 (异步版本)"""
+#     logger.info(f"[METAL_LOCK] Acquiring lock for: {operation}")
+#     # 在异步上下文中等待锁
+#     loop = asyncio.get_event_loop()
+#     await loop.run_in_executor(None, _metal_gpu_lock.acquire)
+#     logger.info(f"[METAL_LOCK] Lock acquired for: {operation}")
 
-async def release_metal_lock_async(operation: str):
-    """释放 Metal GPU 锁 (异步版本)"""
-    _metal_gpu_lock.release()
-    logger.info(f"[METAL_LOCK] Lock released for: {operation}")
+# async def release_metal_lock_async(operation: str):
+#     """释放 Metal GPU 锁 (异步版本)"""
+#     _metal_gpu_lock.release()
+#     logger.info(f"[METAL_LOCK] Lock released for: {operation}")
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -88,49 +94,76 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # 模块级函数：用于子进程执行（避免嵌套函数序列化问题）
 # ============================================================================
 
-def _docling_worker_func(file_path: str, pipeline_options: PdfPipelineOptions, use_proxy: bool, proxy_value: str, result_queue):
-    """
-    在子进程中运行Docling解析（模块级函数，可被multiprocessing序列化）
+# def _docling_worker_func(file_path: str, ocr_options: dict, use_proxy: bool, proxy_value: str, result_queue):
+#     """
+#     在子进程中运行Docling解析（模块级函数，可被multiprocessing序列化）
     
-    这个函数会在独立的进程中执行，拥有完全独立的Metal上下文，
-    不会与主进程中的MLX-VLM产生Metal GPU命令编码器冲突。
-    """
-    try:
-        # 子进程中重新导入和初始化
-        from docling.document_converter import DocumentConverter, PdfFormatOption
-        from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
-        from docling.datamodel.base_models import InputFormat
-        import os
-        import pickle
+#     这个函数会在独立的进程中执行，拥有完全独立的Metal上下文，
+#     不会与主进程中的MLX-VLM产生Metal GPU命令编码器冲突。
+#     """
+#     try:
+#         # 子进程中重新导入和初始化
+#         from docling.document_converter import DocumentConverter, PdfFormatOption
+#         from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+#         from docling.datamodel.base_models import InputFormat
+#         from docling.datamodel.pipeline_options import PdfPipelineOptions, EasyOcrOptions
+#         import os
+#         import pickle
         
-        # 创建转换器
-        converter = DocumentConverter(
-            allowed_formats=[InputFormat.PDF],
-            format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_cls=StandardPdfPipeline,
-                    pipeline_options=pipeline_options,
-                )
-            },
-        )
+#         # 配置OCR
+#         pipeline_options = PdfPipelineOptions()
+#         if ocr_options.get("do_ocr", False):
+#             pipeline_options.do_ocr = True
+#             easyocr_options = EasyOcrOptions(
+#                 lang=ocr_options.get("ocr_lang", ["ch_sim", "en"])
+#             )
+#             pipeline_options.ocr_options = easyocr_options
         
-        # 设置代理
-        if use_proxy and proxy_value:
-            os.environ['ALL_PROXY'] = proxy_value
+#         # 创建转换器
+#         converter = DocumentConverter(
+#             allowed_formats=[InputFormat.PDF],
+#             format_options={
+#                 InputFormat.PDF: PdfFormatOption(
+#                     pipeline_cls=StandardPdfPipeline,
+#                     pipeline_options=pipeline_options,
+#                 )
+#             },
+#         )
         
-        # 执行解析
-        result = converter.convert(source=file_path)
+#         # 设置代理
+#         if use_proxy and proxy_value:
+#             os.environ['ALL_PROXY'] = proxy_value
         
-        # 🔧 只序列化 document 的字典表示，避免 pickle 整个 result 对象
-        # result 对象包含无法 pickle 的 PDF parser 引用
-        doc_dict = result.document.export_to_dict()
-        result_queue.put(("success", pickle.dumps(doc_dict)))
+#         # 执行解析
+#         result = converter.convert(source=file_path)
         
-    except Exception as e:
-        result_queue.put(("error", str(e)))
-    finally:
-        os.environ.pop('ALL_PROXY', None)
+#         # 🔧 只序列化 document 的字典表示，避免 pickle 整个 result 对象
+#         # result 对象包含无法 pickle 的 PDF parser 引用
+#         doc_dict = result.document.export_to_dict()
+#         result_queue.put(("success", pickle.dumps(doc_dict)))
+        
+#     except Exception as e:
+#         result_queue.put(("error", str(e)))
+#     finally:
+#         os.environ.pop('ALL_PROXY', None)
 
+# 🔧 完全禁用 Metal GPU 相关功能
+# 当 Docling 和 MLX-VLM 在同一进程中运行时，即使 Docling 使用 CPU，
+# Metal 框架的某些内部状态仍可能导致冲突
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+# os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"  # 完全禁用 MPS 内存分配
+
+torch.set_num_threads(1)
+if torch.backends.mps.is_available():
+    torch.backends.mps.is_built = lambda: False
+
+# # 禁用 MLX 的某些 Metal 优化，避免与 PyTorch 冲突
+# try:
+#     import mlx.core as mx
+#     # 设置 MLX 使用更保守的内存管理策略
+#     mx.set_memory_limit(4 * 1024 * 1024 * 1024)  # 4GB 限制
+# except Exception:
+#     pass  # MLX 可能还未导入
 # 不同业务场景所需模型能力的组合
 SCENE_MULTIVECTOR: List[ModelCapability] = [ModelCapability.TEXT, ModelCapability.VISION]
 
@@ -159,6 +192,8 @@ class MultiVectorMgr:
         self.use_proxy = False
         # 获取数据库目录作为基础路径
         self._init_base_paths()
+        # 初始化桥接事件发送器
+        self.bridge_events = BridgeEventSender(source="multivector_mgr")
         
         # 初始化chunker
         self._init_chunker()
@@ -198,7 +233,7 @@ class MultiVectorMgr:
             self.docling_cache_dir = self.data_base_dir / "docling_cache"
             self.docling_cache_dir.mkdir(exist_ok=True)
     
-    def _init_docling_converter(self) -> PdfPipelineOptions:
+    def _init_docling_converter(self):
         """初始化docling文档转换器"""
 
         try:
@@ -211,7 +246,6 @@ class MultiVectorMgr:
 
             # 配置PDF处理选项
             pipeline_options = PdfPipelineOptions()
-            # pipeline_options.artifacts_path = self.data_base_dir
             pipeline_options.generate_picture_images = True
             # pipeline_options.generate_page_images = True
             pipeline_options.images_scale = 2.0  # 图片分辨率scale
@@ -235,7 +269,15 @@ Give a concise summary of the image that is well optimized for retrieval.
                 timeout=180,
             )
             pipeline_options.do_ocr = False  # 关闭OCR，依赖docling内置的简单OCR
-            return pipeline_options
+            
+            # 创建文档转换器
+            self.converter = DocumentConverter(format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=pipeline_options,
+                )
+            })
+            
+            logger.info("Docling converter initialized successfully")
             
         except Exception as e:
             logger.error(f"Failed to initialize docling converter: {e}")
@@ -251,7 +293,7 @@ Give a concise summary of the image that is well optimized for retrieval.
             if model_path == "":
                 # 使用lancedb_mgr的base_dir作为缓存目录，它与SQLite数据库在同一父目录
                 cache_directory = self.lancedb_mgr.base_dir
-                model_path = self.models_mgr.download_huggingface_model(BUILTMODELS['EMBEDDING_MODEL']['MLXCOMMUNITY'], cache_directory)
+                model_path = self.models_mgr.download_huggingface_model(EMBEDDING_MODEL, cache_directory)
                 self.model_config_mgr.set_embeddings_model_path(model_path)  
             tokenizer = HuggingFaceTokenizer(
                 tokenizer=AutoTokenizer.from_pretrained(model_path),
@@ -286,10 +328,20 @@ Give a concise summary of the image that is well optimized for retrieval.
         file_ext = Path(file_path).suffix.split('.')[-1].lower()
         if file_ext not in SUPPORTED_FORMATS:
             logger.warning(f"[MULTIVECTOR] Unsupported file type: {file_ext}")
+            if task_id:
+                self.bridge_events.multivector_failed(
+                    file_path, task_id, 
+                    f"不支持的文件类型: {file_ext}，支持的类型: {SUPPORTED_FORMATS}", 
+                    "unsupported_format"
+                )
             return False
 
         try:
             logger.info(f"[MULTIVECTOR] Starting document processing: {file_path}")
+            
+            # 发送进度事件            
+            self.bridge_events.multivector_progress(file_path, task_id or "", 0, 100, 
+                                                   "parsing", "开始解析文档...")
             
             # 1. 验证文件
             if not os.path.exists(file_path):
@@ -302,24 +354,44 @@ Give a concise summary of the image that is well optimized for retrieval.
             existing_doc = self._get_existing_document(file_path, file_hash)
             if existing_doc:
                 logger.info(f"[MULTIVECTOR] Document already processed and unchanged: {file_path}")
+                if task_id:
+                    # 获取已有chunk统计
+                    with Session(self.engine) as session:
+                        parent_stmt = select(ParentChunk).where(ParentChunk.document_id == existing_doc.id)
+                        parent_count = len(session.exec(parent_stmt).all())
+                        
+                        child_stmt = select(ChildChunk).join(ParentChunk).where(ParentChunk.document_id == existing_doc.id)
+                        child_count = len(session.exec(child_stmt).all())
+                        
+                        self.bridge_events.multivector_completed(file_path, task_id, parent_count, child_count)
                 return True
             
             # 4. 使用docling解析文档
+            self.bridge_events.multivector_progress(file_path, task_id or "", 20, 100, 
+                                                   "parsing", "正在解析文档结构...")
             docling_result = self._parse_with_docling(file_path)
             
             # 5. 保存docling解析结果
             docling_json_path = self._save_docling_result(file_path, docling_result)
             
             # 6. 创建/更新Document记录
+            self.bridge_events.multivector_progress(file_path, task_id or "", 40, 100, 
+                                                   "chunking", "创建文档记录...")
             document = self._create_or_update_document(file_path, file_hash, docling_json_path)
             
             # 7. 生成父块和子块
+            self.bridge_events.multivector_progress(file_path, task_id or "", 60, 100, 
+                                                   "chunking", "生成内容块...")
             parent_chunks, child_chunks = self._generate_chunks(document.id, docling_result.document)
             
             # 8. 存储到数据库
+            self.bridge_events.multivector_progress(file_path, task_id or "", 80, 100, 
+                                                   "chunking", "存储到数据库...")
             self._store_chunks(parent_chunks, child_chunks)
             
             # 8.5. 为图片chunks创建图文关系子块（关键设计）
+            self.bridge_events.multivector_progress(file_path, task_id or "", 85, 100, 
+                                                   "chunking", "创建图文关系子块...")
             all_parent_chunks, all_child_chunks = self._create_image_context_chunks(parent_chunks, child_chunks, document.id)
             
             # 如果创建了额外的上下文块，更新chunk列表
@@ -336,6 +408,8 @@ Give a concise summary of the image that is well optimized for retrieval.
                 child_chunks = all_child_chunks
             
             # 9. 向量化和存储
+            self.bridge_events.multivector_progress(file_path, task_id or "", 90, 100, 
+                                                   "vectorizing", "向量化和存储...")
             self._vectorize_and_store(parent_chunks, child_chunks)
             
             # 10. 更新文档状态
@@ -345,12 +419,31 @@ Give a concise summary of the image that is well optimized for retrieval.
                 session.add(document)
                 session.commit()
             
+            # 发送完成事件
+            if task_id:
+                self.bridge_events.multivector_completed(file_path, task_id, 
+                                                        len(parent_chunks), len(child_chunks))
+            else:
+                self.bridge_events.multivector_progress(file_path, "", 100, 100, 
+                                                       "completed", "文档处理完成")
+            
             logger.info(f"[MULTIVECTOR] Document processing completed: {file_path}")
             
             return True
             
         except Exception as e:
             logger.error(f"[MULTIVECTOR] Document processing failed for {file_path}: {e}", exc_info=True)
+            
+            # 发送失败事件
+            error_msg = f"文档处理失败: {str(e)}"
+            help_link = "https://kf.huozhong.in/"
+            if task_id:
+                self.bridge_events.multivector_failed(file_path, task_id, error_msg, help_link, type(e).__name__)
+            else:
+                self.bridge_events.error_occurred("chunking_error", error_msg, {
+                    "file_path": file_path,
+                    "error_type": type(e).__name__
+                })
             
             # 更新文档状态为错误
             try:
@@ -394,129 +487,136 @@ Give a concise summary of the image that is well optimized for retrieval.
             return None
     
     def _parse_with_docling(self, file_path: str) -> ConversionResult:
-        """使用docling解析文档（在子进程中运行以避免Metal GPU冲突）"""
+        self._init_docling_converter()
+        return self.converter.convert(source=file_path)
+    # def _parse_with_docling(self, file_path: str) -> ConversionResult:
+    #     """使用docling解析文档（在子进程中运行以避免Metal GPU冲突）"""
         
-        # 🚀 使用子进程运行Docling，完全隔离Metal上下文
-        # 🔒 使用全局锁确保与 MLX-VLM 互斥
-        from multiprocessing import Process, Queue
-        import pickle
+    #     # 🚀 使用子进程运行Docling，完全隔离Metal上下文
+    #     # 🔒 使用全局锁确保与 MLX-VLM 互斥
+    #     from multiprocessing import Process, Queue
+    #     import pickle
         
-        # 🔒 获取 Metal GPU 锁
-        acquire_metal_lock("Docling PDF parsing")
+    #     # 🔒 获取 Metal GPU 锁
+    #     acquire_metal_lock("Docling PDF parsing")
         
-        try:
-            logger.info(f"[MULTIVECTOR] Parsing document with docling in subprocess: {file_path}")
+    #     try:
+    #         logger.info(f"[MULTIVECTOR] Parsing document with docling in subprocess: {file_path}")
             
-            pipeline_options = self._init_docling_converter()
+    #         # 准备OCR配置
+    #         ocr_options = {
+    #             # "do_ocr": self.do_ocr,
+    #             # "ocr_lang": self.ocr_lang
+    #         }
             
-            # 获取代理配置
-            proxy_value = ""
-            if self.use_proxy:
-                proxy = self.model_config_mgr.get_proxy_value()
-                if proxy and proxy.value:
-                    proxy_value = proxy.value
+    #         # 获取代理配置
+    #         proxy_value = ""
+    #         if self.use_proxy:
+    #             proxy = self.model_config_mgr.get_proxy_value()
+    #             if proxy and proxy.value:
+    #                 proxy_value = proxy.value
             
-            # 创建结果队列
-            result_queue = Queue()
+    #         # 创建结果队列
+    #         result_queue = Queue()
             
-            # 创建并启动子进程（使用模块级函数）
-            process = Process(
-                target=_docling_worker_func,
-                args=(file_path, pipeline_options, self.use_proxy, proxy_value, result_queue)
-            )
-            process.daemon = False  # 确保子进程独立运行
-            process.start()
-            logger.info(f"[MULTIVECTOR] Docling worker process started (PID: {process.pid})")
+    #         # 创建并启动子进程（使用模块级函数）
+    #         process = Process(
+    #             target=_docling_worker_func,
+    #             args=(file_path, ocr_options, self.use_proxy, proxy_value, result_queue)
+    #         )
+    #         process.daemon = False  # 确保子进程独立运行
+    #         process.start()
+    #         logger.info(f"[MULTIVECTOR] Docling worker process started (PID: {process.pid})")
             
-            # 等待结果（设置60秒超时）
-            try:
-                process.join(timeout=60)
-            except Exception as e:
-                logger.error(f"Error waiting for Docling subprocess: {e}")
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-                    if process.is_alive():
-                        process.kill()  # 强制杀死
-                raise RuntimeError(f"Docling subprocess join failed: {e}")
+    #         # 等待结果（设置60秒超时）
+    #         try:
+    #             process.join(timeout=60)
+    #         except Exception as e:
+    #             logger.error(f"Error waiting for Docling subprocess: {e}")
+    #             if process.is_alive():
+    #                 process.terminate()
+    #                 process.join(timeout=5)
+    #                 if process.is_alive():
+    #                     process.kill()  # 强制杀死
+    #             raise RuntimeError(f"Docling subprocess join failed: {e}")
             
-            if process.is_alive():
-                # 超时，强制终止
-                logger.warning("Docling parsing timed out, terminating subprocess")
-                process.terminate()
-                process.join(timeout=5)
-                if process.is_alive():
-                    process.kill()
-                raise TimeoutError("Docling parsing timed out after 60 seconds")
+    #         if process.is_alive():
+    #             # 超时，强制终止
+    #             logger.warning("Docling parsing timed out, terminating subprocess")
+    #             process.terminate()
+    #             process.join(timeout=5)
+    #             if process.is_alive():
+    #                 process.kill()
+    #             raise TimeoutError("Docling parsing timed out after 60 seconds")
             
-            # 检查进程退出码
-            logger.info(f"[MULTIVECTOR] Docling worker exited with code: {process.exitcode}")
-            if process.exitcode != 0:
-                # 子进程异常退出，但不要让它影响主进程
-                error_msg = f"Docling worker process failed with exit code {process.exitcode}"
-                if process.exitcode == 134:
-                    error_msg += " (SIGABRT - possible Metal GPU conflict or assertion failure)"
-                elif process.exitcode < 0:
-                    error_msg += f" (killed by signal {-process.exitcode})"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+    #         # 检查进程退出码
+    #         logger.info(f"[MULTIVECTOR] Docling worker exited with code: {process.exitcode}")
+    #         if process.exitcode != 0:
+    #             # 子进程异常退出，但不要让它影响主进程
+    #             error_msg = f"Docling worker process failed with exit code {process.exitcode}"
+    #             if process.exitcode == 134:
+    #                 error_msg += " (SIGABRT - possible Metal GPU conflict or assertion failure)"
+    #             elif process.exitcode < 0:
+    #                 error_msg += f" (killed by signal {-process.exitcode})"
+    #             logger.error(error_msg)
+    #             raise RuntimeError(error_msg)
             
-            # 获取结果
-            if result_queue.empty():
-                logger.error("Docling worker did not return any result in queue")
-                raise RuntimeError("Docling worker did not return any result")
+    #         # 获取结果
+    #         if result_queue.empty():
+    #             logger.error("Docling worker did not return any result in queue")
+    #             raise RuntimeError("Docling worker did not return any result")
             
-            try:
-                status, data = result_queue.get(timeout=5)
-                logger.info(f"[MULTIVECTOR] Got result from worker, status: {status}")
-            except Exception as e:
-                logger.error(f"Failed to get result from queue: {e}")
-                raise RuntimeError(f"Failed to get result from Docling worker: {e}")
+    #         try:
+    #             status, data = result_queue.get(timeout=5)
+    #             logger.info(f"[MULTIVECTOR] Got result from worker, status: {status}")
+    #         except Exception as e:
+    #             logger.error(f"Failed to get result from queue: {e}")
+    #             raise RuntimeError(f"Failed to get result from Docling worker: {e}")
             
-            if status == "error":
-                logger.error(f"Docling worker returned error: {data}")
-                raise RuntimeError(f"Docling parsing failed: {data}")
+    #         if status == "error":
+    #             logger.error(f"Docling worker returned error: {data}")
+    #             raise RuntimeError(f"Docling parsing failed: {data}")
             
-            # 反序列化结果（现在是 document dict，而不是完整的 ConversionResult）
-            logger.info("[MULTIVECTOR] Deserializing Docling result from subprocess")
-            import pickle
-            from docling_core.types.doc import DoclingDocument
+    #         # 反序列化结果（现在是 document dict，而不是完整的 ConversionResult）
+    #         logger.info("[MULTIVECTOR] Deserializing Docling result from subprocess")
+    #         import pickle
+    #         from docling_core.types.doc import DoclingDocument
             
-            try:
-                doc_dict = pickle.loads(data)
-                logger.info(f"[MULTIVECTOR] Successfully unpickled document dict, keys: {list(doc_dict.keys()) if isinstance(doc_dict, dict) else 'not a dict'}")
-            except Exception as e:
-                logger.error(f"Failed to unpickle document data: {e}")
-                raise RuntimeError(f"Failed to deserialize Docling result: {e}")
+    #         try:
+    #             doc_dict = pickle.loads(data)
+    #             logger.info(f"[MULTIVECTOR] Successfully unpickled document dict, keys: {list(doc_dict.keys()) if isinstance(doc_dict, dict) else 'not a dict'}")
+    #         except Exception as e:
+    #             logger.error(f"Failed to unpickle document data: {e}")
+    #             raise RuntimeError(f"Failed to deserialize Docling result: {e}")
             
-            # 从字典重建 DoclingDocument
-            try:
-                document = DoclingDocument.model_validate(doc_dict)
-                logger.info(f"[MULTIVECTOR] Successfully validated DoclingDocument, pages: {len(document.pages)}")
-            except Exception as e:
-                logger.error(f"Failed to validate DoclingDocument from dict: {e}")
-                raise RuntimeError(f"Failed to rebuild DoclingDocument: {e}")
+    #         # 从字典重建 DoclingDocument
+    #         try:
+    #             document = DoclingDocument.model_validate(doc_dict)
+    #             logger.info(f"[MULTIVECTOR] Successfully validated DoclingDocument, pages: {len(document.pages)}")
+    #         except Exception as e:
+    #             logger.error(f"Failed to validate DoclingDocument from dict: {e}")
+    #             raise RuntimeError(f"Failed to rebuild DoclingDocument: {e}")
             
-            if not document:
-                raise ValueError("Docling parsing returned empty document")
+    #         if not document:
+    #             raise ValueError("Docling parsing returned empty document")
             
-            # 🔧 创建一个简化的 ConversionResult 对象
-            # 只包含必要的 document 字段
-            class SimpleConversionResult:
-                def __init__(self, document):
-                    self.document = document
+    #         # 🔧 创建一个简化的 ConversionResult 对象
+    #         # 只包含必要的 document 字段
+    #         class SimpleConversionResult:
+    #             def __init__(self, document):
+    #                 self.document = document
             
-            result = SimpleConversionResult(document)
+    #         result = SimpleConversionResult(document)
             
-            logger.info(f"[MULTIVECTOR] Docling parsing completed. Document has {len(document.pages)} pages")
-            return result
+    #         logger.info(f"[MULTIVECTOR] Docling parsing completed. Document has {len(document.pages)} pages")
+    #         return result
             
-        except Exception as e:
-            logger.error(f"Docling parsing failed for {file_path}: {e}")
-            raise
-        finally:
-            # 🔓 释放 Metal GPU 锁
-            release_metal_lock("Docling PDF parsing")
+    #     except Exception as e:
+    #         logger.error(f"Docling parsing failed for {file_path}: {e}")
+    #         raise
+    #     finally:
+    #         # 🔓 释放 Metal GPU 锁
+    #         release_metal_lock("Docling PDF parsing")
     
     def _save_docling_result(self, file_path: str, result: ConversionResult) -> str:
         """保存docling解析结果到JSON文件"""
@@ -1340,6 +1440,8 @@ def test_multivector_file():
     lancedb_mgr = LanceDBMgr(base_dir=db_directory)
     # 模型管理器
     models_mgr = ModelsMgr(engine, base_dir=db_directory)
+    # 事件发送器
+    _bridge_events = BridgeEventSender()
     # 分块管理器
     try:
         multivector_mgr = MultiVectorMgr(engine, lancedb_mgr, models_mgr)
@@ -1355,6 +1457,10 @@ def test_multivector_file():
     # 2. 找一个测试文档
     # file_path = "/Users/dio/Downloads/Context Engineering for AI Agents_ Lessons from Building Manus.pdf"
     file_path = "/Users/dio/Downloads/AI代理的上下文工程：构建Manus的经验教训.pdf"
+    file_path = "/Users/dio/Downloads/纳瓦尔宝典：财富与幸福指南.pdf"
+    file_path = "/Users/dio/Downloads/死神永生.pdf"
+    file_path = "/Users/dio/Downloads/9-《高效能人士的七个习惯》(中文版)..pdf"
+    file_path = "/Users/dio/Downloads/寻找Alpha：量化交易策略.pdf"
     
     # # 3. 从process_document()中拆分出的方法进行独立测试
     # logger.info("🧪 测试基本方法...")

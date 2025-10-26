@@ -24,8 +24,10 @@ from db_mgr import (
     Task, 
     SystemConfig,
 )
+from screening_mgr import FileScreeningResult
 from models_mgr import ModelsMgr
 from lancedb_mgr import LanceDBMgr
+from file_tagging_mgr import FileTaggingMgr, configure_parsing_warnings
 from multivector_mgr import MultiVectorMgr
 from task_mgr import TaskManager
 # API路由导入将在lifespan函数中进行
@@ -242,25 +244,57 @@ async def lifespan(app: FastAPI):
         except Exception as monitor_err:
             logger.error(f"启动父进程监控线程失败: {str(monitor_err)}", exc_info=True)
 
+        # 配置解析库的警告和日志级别
+        try:
+            configure_parsing_warnings()
+            logger.info("解析库日志配置已应用")
+        except Exception as parsing_config_err:
+            logger.error(f"配置解析库日志失败: {str(parsing_config_err)}", exc_info=True)
+
         # 注册API路由（在数据库初始化完成后）
         try:
             logger.info("注册API路由...")
             
             # 动态导入API路由
             from models_api import get_router as get_models_router
+            from tagging_api import get_router as get_tagging_router
             from chatsession_api import get_router as get_chatsession_router
+            from myfolders_api import get_router as get_myfolders_router
+            from screening_api import get_router as get_screening_router
+            from search_api import get_router as get_search_router
+            from unified_tools_api import get_router as get_tools_router
             from documents_api import get_router as get_documents_router
+            from user_api import get_router as get_user_router
             
             # 注册各个API路由
             models_router = get_models_router(get_engine=get_engine, base_dir=app.state.db_directory)
             app.include_router(models_router, prefix="", tags=["models"])
             
+            tagging_router = get_tagging_router(get_engine=get_engine, base_dir=app.state.db_directory)
+            app.include_router(tagging_router, prefix="", tags=["tagging"])
+            
             chatsession_router = get_chatsession_router(get_engine=get_engine, base_dir=app.state.db_directory)
             app.include_router(chatsession_router, prefix="", tags=["chat-sessions"])
             
+            myfolders_router = get_myfolders_router(get_engine=get_engine)
+            app.include_router(myfolders_router, prefix="", tags=["myfolders"])
+            
+            screening_router = get_screening_router(get_engine=get_engine)
+            app.include_router(screening_router, prefix="", tags=["screening"])
+            
+            search_router = get_search_router(get_engine=get_engine, base_dir=app.state.db_directory)
+            app.include_router(search_router, prefix="", tags=["search"])
+            
+            tools_router = get_tools_router(get_engine=get_engine)
+            app.include_router(tools_router, prefix="", tags=["tools"])
+            
             documents_router = get_documents_router(get_engine=get_engine, base_dir=app.state.db_directory)
             app.include_router(documents_router, prefix="", tags=["documents"])
-                        
+            
+            # 用户认证相关路由
+            user_router = get_user_router(get_engine=get_engine)
+            app.include_router(user_router, prefix="", tags=["user", "auth"])
+            
             logger.info("所有API路由注册完成")
         except Exception as router_err:
             logger.error(f"注册API路由失败: {str(router_err)}", exc_info=True)
@@ -354,9 +388,43 @@ def get_task_manager(engine: Engine = Depends(get_engine)) -> TaskManager:
 def _process_task(task: Task, lancedb_mgr, task_mgr: TaskManager, engine: Engine) -> None:
     """通用任务处理逻辑"""
     models_mgr = ModelsMgr(engine=engine, base_dir=app.state.db_directory)
+    file_tagging_mgr = FileTaggingMgr(engine=engine, lancedb_mgr=lancedb_mgr, models_mgr=models_mgr)
     multivector_mgr = MultiVectorMgr(engine=engine, lancedb_mgr=lancedb_mgr, models_mgr=models_mgr)
 
-    if task.task_type == TaskType.MULTIVECTOR.value:
+    if task.task_type == TaskType.TAGGING.value:
+        # 检查模型可用性
+        if not file_tagging_mgr.check_file_tagging_model_availability():
+            logger.warning(f"文件打标签模型暂不可用（可能正在下载或加载中），任务 {task.id} 将保持 PENDING 状态等待重试")
+            # 不更新任务状态，保持为 PENDING，让任务处理线程稍后重试
+            # 这样可以等待内置模型下载和加载完成
+            return
+        
+        # 高优先级任务: 单个文件处理
+        if task.priority == TaskPriority.HIGH.value and task.extra_data and 'screening_result_id' in task.extra_data:
+            logger.info(f"开始处理高优先级文件打标签任务 (Task ID: {task.id})")
+            success = file_tagging_mgr.process_single_file_task(task.extra_data['screening_result_id'])
+            if success:
+                task_mgr.update_task_status(task.id, TaskStatus.COMPLETED, result=TaskResult.SUCCESS)
+                
+                # 检查是否需要自动衔接MULTIVECTOR任务（仅当文件被pin时）
+                if multivector_mgr.check_multivector_model_availability():
+                    _check_and_create_multivector_task(engine, task_mgr, task.extra_data.get('screening_result_id'))
+            else:
+                task_mgr.update_task_status(task.id, TaskStatus.FAILED, result=TaskResult.FAILURE)
+        # 中低优先级任务: 批量处理
+        else:
+            logger.info(f"开始批量文件打标签任务 (Task ID: {task.id})")
+            result_data = file_tagging_mgr.process_pending_batch(task_id=task.id)
+            
+            # 无论批量任务处理了多少文件，都将触发任务文件打标签为完成
+            task_mgr.update_task_status(
+                task.id, 
+                TaskStatus.COMPLETED, 
+                result=TaskResult.SUCCESS, 
+                message=f"批量处理完成: 处理了 {result_data.get('processed', 0)} 个文件。"
+            )
+    
+    elif task.task_type == TaskType.MULTIVECTOR.value:
         if not multivector_mgr.check_multivector_model_availability():
             logger.warning(f"多模态向量化模型暂不可用（可能正在下载或加载中），任务 {task.id} 将保持 PENDING 状态等待重试")
             # 不更新任务状态，保持为 PENDING，让任务处理线程稍后重试
@@ -525,27 +593,62 @@ def high_priority_task_processor(engine, db_directory: str, stop_event: threadin
         sleep_duration=2
     )
 
-def _check_and_create_multivector_task(engine: Engine, task_mgr: TaskManager, file_path: str):
+def _check_and_create_multivector_task(engine: Engine, task_mgr: TaskManager, screening_result_id: int):
     """
     检查文件是否处于pin状态，如果是则自动创建MULTIVECTOR任务
     
     Args:
         engine: 数据库引擎
         task_mgr: 任务管理器
-        file_path: 文件路径
+        screening_result_id: 粗筛结果ID
     """
+    if not screening_result_id:
+        return
+    
     try:
-        task_mgr.add_task(
-            task_name=f"多模态向量化: {Path(file_path).name}",
-            task_type=TaskType.MULTIVECTOR,
-            priority=TaskPriority.HIGH,
-            extra_data={"file_path": file_path},
-            target_file_path=file_path  # 设置冗余字段便于查询
-        )
+        with Session(bind=engine) as session:
+            # 获取粗筛结果，包含文件路径信息
+            screening_result = session.get(FileScreeningResult, screening_result_id)
+            if not screening_result:
+                logger.warning(f"未找到screening_result_id: {screening_result_id}")
+                return
+            
+            file_path = screening_result.file_path
+            
+            # 检查文件是否在最近24小时内被pin过
+            is_recently_pinned = _check_file_pin_status(file_path, task_mgr)
+            
+            if is_recently_pinned:
+                logger.info(f"文件 {file_path} 在最近24小时内被pin过，创建MULTIVECTOR任务")
+                task_mgr.add_task(
+                    task_name=f"多模态向量化: {Path(file_path).name}",
+                    task_type=TaskType.MULTIVECTOR,
+                    priority=TaskPriority.HIGH,
+                    extra_data={"file_path": file_path},
+                    target_file_path=file_path  # 设置冗余字段便于查询
+                )
+            else:
+                logger.info(f"文件 {file_path} 在最近8小时内未被pin过，跳过MULTIVECTOR任务")
             
     except Exception as e:
         logger.error(f"检查和创建MULTIVECTOR任务时发生错误: {e}", exc_info=True)
 
+def _check_file_pin_status(file_path: str, task_mgr: TaskManager = Depends(get_task_manager)) -> bool:
+    """
+    检查文件是否在最近24小时内被pin过（即有成功的MULTIVECTOR任务）
+    
+    Args:
+        file_path: 文件路径
+        task_mgr: 任务管理器实例
+        
+    Returns:
+        bool: 文件是否在最近24小时内被pin过
+    """
+    try:
+        return task_mgr.is_file_recently_pinned(file_path, hours=24)
+    except Exception as e:
+        logger.error(f"检查文件pin状态时发生错误: {e}", exc_info=True)
+        return False
 
 @app.get("/task/{task_id}")
 def get_task_status(task_id: int, task_mgr: TaskManager = Depends(get_task_manager)):
@@ -779,6 +882,14 @@ async def pin_file(
             "message": f"Pin文件失败: {str(e)}"
         }
 
+@app.get("/test-bridge-stdout")
+def test_bridge_stdout():
+    """测试桥接事件的stdout输出能力"""
+    from test_bridge_stdout import test_bridge_stdout_main
+    test_bridge_stdout_main()
+    return {"status": "ok"}
+
+
 def signal_handler(signum, frame):
     """信号处理器，用于优雅关闭"""
     print(f"接收到信号 {signum}，开始优雅关闭...")
@@ -799,9 +910,9 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal_handler)
         
         parser = argparse.ArgumentParser()
-        parser.add_argument("--port", type=int, default=60000, help="API服务监听端口")
+        parser.add_argument("--port", type=int, default=60315, help="API服务监听端口")
         parser.add_argument("--host", type=str, default="127.0.0.1", help="API服务监听地址")
-        parser.add_argument("--db-path", type=str, default="sqlite.db", help="数据库文件路径")
+        parser.add_argument("--db-path", type=str, default="knowledge-focus.db", help="数据库文件路径")
         args = parser.parse_args()
 
         print("API服务程序启动")

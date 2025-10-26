@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import List, Dict, Any
 import os
-from config import BUILTMODELS
+from config import VLM_MODEL
     
 # 任务状态枚举
 class TaskStatus(str, PyEnum):
@@ -642,6 +642,16 @@ class DBManager:
                 # 初始化默认模型提供者
                 data = [
                     {
+                        "display_name": "[Builtin]", 
+                        "provider_type": "openai",
+                        "source_type": ModelSourceType.BUILTIN.value, 
+                        "base_url": "http://127.0.0.1:60315/v1", 
+                        "is_user_added": False,
+                        "get_key_url": "https://platform.openai.com/api-keys",
+                        "support_discovery": False,
+                        "use_proxy": False,
+                    },
+                    {
                         "display_name": "OpenAI", 
                         "provider_type": "openai",
                         "source_type": ModelSourceType.CONFIGURABLE.value, 
@@ -651,6 +661,19 @@ class DBManager:
                         "support_discovery": True,
                         "use_proxy": False,
                     },
+                    # {
+                    #     "display_name": "Azure OpenAI", 
+                    #     "provider_type": "azure", 
+                    #     "source_type": ModelSourceType.CONFIGURABLE.value, 
+                    #     "extra_data_json":{
+                    #         "azure_endpoint": "",
+                    #         "api_version": "",
+                    #         "api_key": "",
+                    #     }, 
+                    #     "is_user_added": False,
+                    #     "get_key_url": "https://azure.microsoft.com/",
+                    #     "support_discovery": False
+                    # },
                     {
                         "display_name": "Anthropic", 
                         "provider_type": "anthropic", 
@@ -671,6 +694,18 @@ class DBManager:
                         "support_discovery": True,
                         "use_proxy": False,
                     },
+                    # {
+                    #     "display_name": "Google Vertex AI", 
+                    #     "provider_type": "google", 
+                    #     "source_type": ModelSourceType.CONFIGURABLE.value, 
+                    #     "extra_data_json":{
+                    #         "project": "",
+                    #         "location": "",
+                    #     }, 
+                    #     "is_user_added": False,
+                    #     "get_key_url": "https://console.cloud.google.com/vertex-ai/",
+                    #     "support_discovery": False
+                    # },
                     {
                         "display_name": "Grok (xAI)", 
                         "provider_type": "grok", 
@@ -701,6 +736,16 @@ class DBManager:
                         "support_discovery": False,
                         "use_proxy": False,
                     },
+                    # {
+                    #     "display_name": "Deepseek", 
+                    #     "provider_type": "openai", 
+                    #     "source_type": ModelSourceType.CONFIGURABLE.value, 
+                    #     "base_url": "https://api.deepseek.com/v1",
+                    #     "is_user_added": False,
+                    #     "get_key_url": "https://platform.deepseek.com/api_keys",
+                    #     "support_discovery": False,
+                    #     "use_proxy": False,
+                    # },
                     {
                         "display_name": "Ollama", 
                         "provider_type": "openai", 
@@ -737,7 +782,7 @@ class DBManager:
                     # 内置模型 - 直接运行在本地
                     {
                         "provider_id": 1,  # [Builtin]
-                        "model_identifier": BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY'],
+                        "model_identifier": VLM_MODEL,
                         "display_name": "Qwen3-VL 4B (3-bit)", 
                         "capabilities_json": [ModelCapability.VISION.value, ModelCapability.TEXT.value, ModelCapability.STRUCTURED_OUTPUT.value, ModelCapability.TOOL_USE.value],
                         "max_context_length": 256*1024,
@@ -835,6 +880,72 @@ class DBManager:
             if not inspector.has_table(Scenario.__tablename__):
                 Scenario.__table__.create(self.engine, checkfirst=True)
                 data = [
+                    {
+                        "name": "co_reading1", 
+                        "description": "AI跟你一起阅读电子书", 
+                        "display_name": "共读电子书",
+                        "system_prompt": """
+你是一个专业的PDF阅读助手，具有视觉能力。用户正在使用PDF阅读器阅读文档，你收到的图片是用户当前阅读页面的截图。
+
+你的任务：
+1. 准确识别PDF截图中的文本内容和图表信息
+2. 理解用户当前的阅读进度和关注点  
+3. 基于截图内容回答用户的问题
+4. 理解和利用“相关知识背景”中的信息而不是想象和编造
+
+注意事项：
+- 截图反映了用户当前的视野范围，请重点关注可见内容
+- 如果截图不清晰或内容不完整，请告知用户并建议进行内容放大后再次发问
+- 结合用户的问题和截图内容提供精准回答
+- 保持简洁专业的回复风格
+""".strip(),
+                        "preset_tool_ids": [],
+                        "metadata_json": []
+                    },
+                    {
+                        "name": "co_reading2", 
+                        "description": "AI跟你一起阅读电子书", 
+                        "display_name": "共读电子书",
+                        "system_prompt": """
+你是一个专业的PDF阅读助手，具有视觉能力。用户正在使用PDF阅读器阅读文档，你收到的图片是用户当前阅读页面的截图。
+
+你的任务：
+1. 准确识别PDF截图中的文本内容和图表信息
+2. 理解用户当前的阅读进度和关注点  
+3. 基于截图内容回答用户的问题
+4. 理解和利用“相关知识背景”中的信息而不是想象和编造
+
+注意事项：
+- 截图反映了用户当前的视野范围，请重点关注可见内容
+- 如果截图不清晰或内容不完整，请告知用户并建议进行内容放大后再次发问
+- 结合用户的问题和截图内容提供精准回答
+- 保持简洁专业的回复风格
+""".strip(),
+                        "preset_tool_ids": [],
+                        "metadata_json": []
+                    },
+                    {
+                        "name": "co_reading3", 
+                        "description": "AI跟你一起阅读电子书", 
+                        "display_name": "共读电子书",
+                        "system_prompt": """
+你是一个专业的PDF阅读助手，具有视觉能力。用户正在使用PDF阅读器阅读文档，你收到的图片是用户当前阅读页面的截图。
+
+你的任务：
+1. 准确识别PDF截图中的文本内容和图表信息
+2. 理解用户当前的阅读进度和关注点  
+3. 基于截图内容回答用户的问题
+4. 理解和利用“相关知识背景”中的信息而不是想象和编造
+
+注意事项：
+- 截图反映了用户当前的视野范围，请重点关注可见内容
+- 如果截图不清晰或内容不完整，请告知用户并建议进行内容放大后再次发问
+- 结合用户的问题和截图内容提供精准回答
+- 保持简洁专业的回复风格
+""".strip(),
+                        "preset_tool_ids": [],
+                        "metadata_json": []
+                    },
                     {
                         "name": "co_reading", 
                         "description": "AI跟你一起阅读电子书", 

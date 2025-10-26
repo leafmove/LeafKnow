@@ -4,15 +4,13 @@ import re
 import platform
 import logging
 import os
+import io
+import base64
+from PIL import Image
 import time
 import signal
 import tiktoken
-import av
-import math
-import uuid
-import pathlib
-from typing import Dict, Any, Tuple
-from edge_tts import Communicate
+from typing import Dict, Any
 
 # 为当前模块创建专门的日志器（最佳实践）
 logger = logging.getLogger()
@@ -403,51 +401,91 @@ def remove_json_keys_safely(obj, field_name: str, keys_to_remove: list) -> None:
     # 显式标记字段已修改
     attributes.flag_modified(obj, field_name)
 
-async def tts(text: str, base_dir: str) -> Tuple[str, int]:
-    '''
-    use edge-tts to generate tts audio file
+# ==================== 图片预处理 ====================
+
+def preprocess_image(image_url: str, max_size: int = 1920, quality: int = 85) -> str:
+    """
+    预处理图片：压缩大图片以节省内存和加快推理速度
     
-    > uv run edge-tts --list-voices | grep zh                                                    
-    zh-CN-XiaoxiaoNeural               Female    News, Novel            Warm
-    zh-CN-XiaoyiNeural                 Female    Cartoon, Novel         Lively
-    zh-CN-YunjianNeural                Male      Sports, Novel          Passion
-    zh-CN-YunxiNeural                  Male      Novel                  Lively, Sunshine
-    zh-CN-YunxiaNeural                 Male      Cartoon, Novel         Cute
-    zh-CN-YunyangNeural                Male      News                   Professional, Reliable
-    zh-CN-liaoning-XiaobeiNeural       Female    Dialect                Humorous
-    zh-CN-shaanxi-XiaoniNeural         Female    Dialect                Bright
-    zh-HK-HiuGaaiNeural                Female    General                Friendly, Positive
-    zh-HK-HiuMaanNeural                Female    General                Friendly, Positive
-    zh-HK-WanLungNeural                Male      General                Friendly, Positive
-    zh-TW-HsiaoChenNeural              Female    General                Friendly, Positive
-    zh-TW-HsiaoYuNeural                Female    General                Friendly, Positive
-    zh-TW-YunJheNeural                 Male      General                Friendly, Positive
-    '''
-    communicate = Communicate(
-        text=text, 
-        voice="zh-CN-YunxiaNeural",
-        # proxy=PROXIES['http'],
-        )
-    rnd_filename = str(uuid.uuid4())
-    dir_path = pathlib.Path(base_dir) / 'voice_cache'
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-    raw_audio_file = dir_path / f'{rnd_filename}.mp3'
-    await communicate.save(raw_audio_file.as_posix())
-
-    dur = _get_duration(raw_audio_file.as_posix())
-    print(f"音频时长为{dur}秒: \n{text}")
-    return raw_audio_file.as_posix(), dur
-
-def _get_duration(media_path: str) -> int:
-        """计算媒体文件时长"""
-        # 实践证明280个中文字符，生成的语音大概60秒
-        # with av.open(media_path) as container:
-        #     duration = container.duration / 1000000
-        # return math.ceil(duration)
-        container = av.open(media_path) # type: ignore
-        audio_stream = container.streams.audio[0]  # Assuming there is only one audio stream
-        duration = audio_stream.duration if audio_stream.duration is not None else 1
-        time_base = audio_stream.time_base if audio_stream.time_base is not None else 1
-        duration_seconds = math.ceil(duration * time_base)
-        return duration_seconds
+    Args:
+        image_url: 图片URL（支持 file:// 和 data:image/jpeg;base64,... 格式）
+        max_size: 最大边长（宽或高）
+        quality: JPEG压缩质量（1-100）
+    
+    Returns:
+        处理后的图片URL（data:image/jpeg;base64,... 格式）
+    """
+    try:
+        # 解析图片数据
+        if image_url.startswith("data:image/"):
+            # Base64 格式
+            header, encoded = image_url.split(",", 1)
+            image_data = base64.b64decode(encoded)
+        elif image_url.startswith("file://"):
+            # 文件路径
+            file_path = image_url[7:]  # 移除 file:// 前缀
+            with open(file_path, "rb") as f:
+                image_data = f.read()
+        else:
+            # 不支持的格式，返回原始URL
+            logger.warning(f"Unsupported image URL format: {image_url[:50]}")
+            return image_url
+        
+        # 检查原始大小
+        # original_size = len(image_data)
+        
+        # 打开图片
+        img = Image.open(io.BytesIO(image_data))
+        # original_format = img.format
+        # original_dimensions = img.size
+        
+        # 检查是否需要调整大小
+        width, height = img.size
+        needs_resize = width > max_size or height > max_size
+        
+        if needs_resize:
+            # 等比例缩放
+            if width > height:
+                new_width = max_size
+                new_height = int(height * max_size / width)
+            else:
+                new_height = max_size
+                new_width = int(width * max_size / height)
+            
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            # logger.info(f"Resized image from {original_dimensions} to {img.size}")
+        
+        # 转换为 RGB（去除 alpha 通道）
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        
+        # 保存为 JPEG（压缩）
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=quality, optimize=True)
+        compressed_data = buffer.getvalue()
+        # compressed_size = len(compressed_data)
+        
+        # 编码为 base64
+        encoded_data = base64.b64encode(compressed_data).decode("utf-8")
+        result_url = f"data:image/jpeg;base64,{encoded_data}"
+        
+        # # 日志
+        # compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+        # logger.info(
+        #     f"Image preprocessing: {original_format} {original_dimensions} "
+        #     f"({original_size / 1024 / 1024:.1f}MB) → "
+        #     f"JPEG {img.size} ({compressed_size / 1024 / 1024:.1f}MB, "
+        #     f"compressed {compression_ratio:.1f}%)"
+        # )
+        
+        return result_url
+        
+    except Exception as e:
+        logger.error(f"Image preprocessing failed: {e}", exc_info=True)
+        return image_url  # 失败时返回原始URL

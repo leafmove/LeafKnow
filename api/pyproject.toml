@@ -1,16 +1,30 @@
 [project]
-name = "leaf-know-api"
+name = "knowledge-focus-python-api"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "av>=16.0.1",
-    "docling>=2.58.0",
-    "edge-tts==7.2.1",
-    "fastapi>=0.120.0",
-    "lancedb>=0.25.2",
+    "docling",
+    "fastapi>=0.116.1",
+    "httpx[socks]>=0.28.1",
+    "lancedb>=0.25.0",
     "markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.3",
-    "pydantic-ai>=1.4.0",
-    "sqlmodel>=0.0.27",
-    "tiktoken>=0.12.0",
-    "uvicorn>=0.38.0",
+    "mlx>=0.29.1",
+    "mlx-vlm>=0.3.4",
+    "opencv-python>=4.12.0.88",
+    "pydantic-ai>=1.0.10",
+    "pyjwt>=2.10.1",
+    "sqlalchemy>=2.0.44",
+    "sqlmodel>=0.0.24",
+    "tiktoken>=0.11.0",
+    "torch>=2.10.0.dev20250913",
+    "torchvision",
+    "uvicorn>=0.35.0",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { url = "https://download.pytorch.org/whl/nightly/cpu/torchvision-0.25.0.dev20250913-cp313-cp313-macosx_12_0_arm64.whl" }
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/nightly/cpu"

@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional, Callable
 from sqlmodel import Session, select
 from sqlalchemy import Engine
 from db_mgr import ChatSession, Tool, Scenario, ToolType
+from backend_tool_caller import g_backend_tool_caller
 from utils import update_json_field_safely
 
 logger = logging.getLogger()
@@ -143,6 +144,45 @@ class ToolProvider:
         except Exception as e:
             logger.error(f"加载工具 {tool_name} 失败: {e}")
             return None
+    
+    def _create_channel_tool_wrapper(self, tool: Tool) -> Callable:
+        """为工具通道类型的工具创建包装函数"""
+        async def channel_tool_wrapper(ctx=None, **kwargs):
+            """工具通道包装器 - 调用前端工具"""
+            try:
+                # 注意：传递给前端时不包含RunContext，只传递业务参数
+                result = await g_backend_tool_caller.call_frontend_tool(
+                    tool_name=tool.name,
+                    timeout=30.0,
+                    **kwargs
+                )
+                return result
+            except Exception as e:
+                logger.error(f"工具通道调用失败 {tool.name}: {e}")
+                return {"success": False, "error": str(e)}
+        
+        # 设置函数属性用于Agent识别
+        channel_tool_wrapper.__name__ = tool.name
+        
+        # 尝试从原始函数定义处获取文档字符串
+        original_doc = self._get_original_function_doc(tool)
+        if original_doc:
+            channel_tool_wrapper.__doc__ = original_doc
+        else:
+            # 如果无法获取原始文档，回退到使用数据库描述
+            channel_tool_wrapper.__doc__ = f'{tool.description}\n'
+        
+        # 动态生成参数信息并附加到函数上（用于PydanticAI）
+        sig_info = self._get_function_signature_info(tool)
+        if sig_info:
+            # 为PydanticAI提供参数信息
+            channel_tool_wrapper.__annotations__ = {}
+            if 'properties' in sig_info:
+                for param_name in sig_info['properties']:
+                    # 简单的类型映射，可以根据需要改进
+                    channel_tool_wrapper.__annotations__[param_name] = str
+        
+        return channel_tool_wrapper
     
     def _get_original_function_doc(self, tool: Tool) -> Optional[str]:
         """从原始函数定义处获取文档字符串"""

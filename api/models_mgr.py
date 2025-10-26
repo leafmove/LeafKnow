@@ -1,4 +1,4 @@
-from config import singleton, BUILTMODELS
+from config import singleton, EMBEDDING_MODEL, VLM_MODEL
 import os
 import re
 import json
@@ -23,12 +23,88 @@ from pydantic_ai.messages import (
 from pydantic_ai.exceptions import UsageLimitExceeded
 # from pydantic_ai.usage import UsageLimits
 from model_config_mgr import ModelConfigMgr, ModelUseInterface
-from models_builtin import load_embedding_model
-from memory_mgr import MemoryMgr
 from tool_provider import ToolProvider
+from memory_mgr import MemoryMgr
+from bridge_events import BridgeEventSender
 from huggingface_hub import snapshot_download
+from tqdm import tqdm
+from mlx_embeddings.utils import load as load_embedding_model
+import mlx.core as mx
 
 logger = logging.getLogger()
+
+# 定义一个可以在运行时创建的 BridgeProgressReporter 类
+def create_bridge_progress_reporter(bridge_events, model_name):
+    """
+    动态创建带有bridge events的tqdm子类
+    
+    这个工厂函数解决了在类方法内部创建子类时的作用域问题。
+    """    
+    class BridgeProgressReporter(tqdm):
+        """
+        继承自真正的tqdm类，确保完全兼容
+        """
+        
+        def __init__(self, *args, **kwargs):
+            # 注入我们的自定义参数
+            self.bridge_events = bridge_events
+            self.model_name = model_name
+            
+            # 调用父类初始化
+            super().__init__(*args, **kwargs)
+            
+            # 发送开始事件
+            if self.bridge_events and not self.disable:
+                self.bridge_events.model_download_progress(
+                    model_name=self.model_name,
+                    current=0,
+                    total=self.total or 0,
+                    message=f"开始下载 {self.model_name}",
+                    stage="downloading"
+                )
+        
+        def update(self, n=1):
+            """重写update方法，添加bridge events"""
+            # 调用父类的update方法
+            result = super().update(n)
+            
+            # 发送进度事件
+            if self.bridge_events and not self.disable:
+                # 格式化消息
+                if self.unit_scale and self.unit == 'B':
+                    # 自动缩放字节单位
+                    current_mb = self.n / (1024 * 1024)
+                    total_mb = self.total / (1024 * 1024) if self.total and self.total > 0 else 0
+                    message = f"{self.desc}: {current_mb:.1f}MB/{total_mb:.1f}MB"
+                else:
+                    message = f"{self.desc}: {self.n}/{self.total or '?'}"
+                
+                self.bridge_events.model_download_progress(
+                    model_name=self.model_name,
+                    current=self.n,
+                    total=self.total or 0,
+                    message=message,
+                    stage="downloading"
+                )
+            
+            return result
+        
+        def close(self):
+            """重写close方法，发送完成事件"""
+            # 发送完成事件
+            if self.bridge_events and not self.disable:
+                self.bridge_events.model_download_progress(
+                    model_name=self.model_name,
+                    current=self.n,
+                    total=self.total or self.n,
+                    message=f"{self.model_name} 下载完成",
+                    stage="completed"
+                )
+            
+            # 调用父类的close方法
+            return super().close()
+    
+    return BridgeProgressReporter
 
 @singleton
 class ModelsMgr:
@@ -38,6 +114,7 @@ class ModelsMgr:
         self.model_config_mgr = ModelConfigMgr(engine)
         self.tool_provider = ToolProvider(engine)
         self.memory_mgr = MemoryMgr(engine)
+        self.bridge_events = BridgeEventSender(source="models-manager")
 
     def get_embedding(self, text_str: str) -> List[float]:
         """
@@ -48,7 +125,7 @@ class ModelsMgr:
         """
         model_path = self.model_config_mgr.get_embeddings_model_path()
         if model_path == "":
-            model_path = self.download_huggingface_model(BUILTMODELS['EMBEDDING_MODEL']['MLXCOMMUNITY'], self.base_dir)
+            model_path = self.download_huggingface_model(EMBEDDING_MODEL, self.base_dir)
             self.model_config_mgr.set_embeddings_model_path(model_path)        
         try:
             model, tokenizer = load_embedding_model(model_path)
@@ -100,7 +177,7 @@ class ModelsMgr:
         model = self.model_config_mgr.model_adapter(model_interface)
         # System prompt 明确要求返回纯 JSON，不要 markdown 代码块
         system_prompt = """
-You are an expert AI data curator for a desktop knowledge management app named "Leaf Know". Your mission is to analyze file information and generate a refined, consistent, and structured set of tags that are optimized for future retrieval and organization.
+You are an expert AI data curator for a desktop knowledge management app named "KnowledgeFocus". Your mission is to analyze file information and generate a refined, consistent, and structured set of tags that are optimized for future retrieval and organization.
 
 # CRITICAL OUTPUT REQUIREMENT
 YOU MUST ONLY OUTPUT RAW JSON WITHOUT ANY MARKDOWN CODE BLOCKS.
@@ -191,7 +268,7 @@ Do not include ANY explanatory text before or after the JSON.
             model=model,
             system_prompt=system_prompt,
             # mlx_vlm加载模型使用 PromptedOutput 强制 prompt-based 模式，避免 tool calling
-            output_type=PromptedOutput(TagResponse) if model_interface.model_identifier == BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY'] else TagResponse,
+            output_type=PromptedOutput(TagResponse) if model_interface.model_identifier == VLM_MODEL else TagResponse,
             retries=3,  # 允许最多3次重试，给小模型更多纠错机会
         )
         
@@ -275,7 +352,7 @@ Do not include ANY explanatory text before or after the JSON.
             model=model,
             system_prompt=messages[0]['content'],
             # mlx_vlm加载模型使用 PromptedOutput 强制 prompt-based 模式，避免 tool calling
-            output_type=PromptedOutput(SessionTitleResponse) if model_interface.model_identifier == BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY'] else SessionTitleResponse,
+            output_type=PromptedOutput(SessionTitleResponse) if model_interface.model_identifier == VLM_MODEL else SessionTitleResponse,
         )
         try:
             response = agent.run_sync(
@@ -845,25 +922,51 @@ Generate a title that best represents what this conversation will be about. Avoi
         for endpoint in endpoints:
             for attempt in range(max_attempts_per_endpoint):
                 try:
+                    # 使用工厂函数创建自定义的tqdm子类
+                    ProgressReporter = create_bridge_progress_reporter(
+                        bridge_events=self.bridge_events,
+                        model_name=model_id
+                    )            
                     # 使用snapshot_download下载模型
                     local_path = snapshot_download(
                         repo_id=model_id,
                         cache_dir=cache_dir,
+                        tqdm_class=ProgressReporter,
                         allow_patterns=["*.safetensors", "*.json", "*.txt"],  # 只下载需要的文件
                         endpoint=endpoint, # 添加endpoint参数
+                    )
+                    # 发送完成事件
+                    self.bridge_events.model_download_completed(
+                        model_name=model_id,
+                        local_path=local_path,
+                        message=f"模型 {model_id} 下载完成"
                     )
                     return local_path
                 except Exception as e:
                     last_exception = e
                     error_msg = f"下载模型失败 (尝试 {attempt + 1}/{max_attempts_per_endpoint}，镜像站: {endpoint}): {str(e)}"
                     logger.warning(f"下载模型 {model_id} 失败: {e}", exc_info=True)
+                    # 发送失败事件，但不是最终失败，只是单次尝试失败
+                    self.bridge_events.model_download_progress(
+                        model_name=model_id,
+                        current=0,
+                        total=0,
+                        message=f"下载失败 (尝试 {attempt + 1}/{max_attempts_per_endpoint}，镜像站: {endpoint})",
+                        stage="failed_attempt"
+                    )
                     time.sleep(2) # 等待2秒后重试
 
             logger.error(f"镜像站 {endpoint} 下载模型 {model_id} 失败，已达到最大重试次数 {max_attempts_per_endpoint}。")
 
         # 如果所有镜像站和所有尝试都失败了
         error_msg = f"所有镜像站下载模型 {model_id} 均失败: {str(last_exception)}"
-        logger.error(error_msg, exc_info=True)           
+        logger.error(error_msg, exc_info=True)
+        # 发送最终失败事件
+        self.bridge_events.model_download_failed(
+            model_name=model_id,
+            error_message=error_msg,
+            details={"exception_type": type(last_exception).__name__ if last_exception else "UnknownError"}
+        )            
         return ""
 
     def _get_rag_context(self, session_id: int, user_query: str, available_tokens: int) -> tuple[str, list]:
@@ -964,46 +1067,67 @@ Generate a title that best represents what this conversation will be about. Avoi
         try:
             if not rag_sources:
                 return
+                
+            # 构建发送给观察窗的数据
+            observation_data = {
+                "timestamp": int(time.time() * 1000),
+                "query": user_query[:200],  # 限制查询长度
+                "sources_count": len(rag_sources),
+                "sources": [
+                    {
+                        "file_path": source.get('file_path', ''),
+                        "similarity_score": round(source.get('similarity_score', 0.0), 3),
+                        "content_preview": source.get('content', '')[:300],  # 内容预览
+                        "chunk_id": source.get('chunk_id'),
+                        "metadata": source.get('metadata', {})
+                    }
+                    for source in rag_sources
+                ],
+                "event_type": "rag_retrieval"
+            }
+            
+            # 通过桥接器发送事件
+            self.bridge_events.send_event("rag-retrieval-result", observation_data)
             
             logger.debug(f"RAG观察数据已发送: {len(rag_sources)} 个来源")
             
         except Exception as e:
             logger.error(f"发送RAG观察数据失败: {e}", exc_info=True)
 
-    # def cosine_similarity_list_input(self, a: List[float], b: List[float]) -> float:
-    #     """
-    #     计算两个List[float]（向量）之间的余弦相似度。
+    def cosine_similarity_list_input(self, a: List[float], b: List[float]) -> float:
+        """
+        计算两个List[float]（向量）之间的余弦相似度。
 
-    #     Args:
-    #         a: 第一个输入列表（表示向量）。
-    #         b: 第二个输入列表（表示向量）。
+        Args:
+            a: 第一个输入列表（表示向量）。
+            b: 第二个输入列表（表示向量）。
 
-    #     Returns:
-    #         一个浮点数，表示输入向量之间的余弦相似度。
-    #         如果任一向量为零向量，则返回 0.0。
-    #     """
-    #     # 将 List[float] 转换为 mlx.core.array
-    #     vec_a = mx.array(a)
-    #     vec_b = mx.array(b)
+        Returns:
+            一个浮点数，表示输入向量之间的余弦相似度。
+            如果任一向量为零向量，则返回 0.0。
+        """
+        # 将 List[float] 转换为 mlx.core.array
+        vec_a = mx.array(a)
+        vec_b = mx.array(b)
 
-    #     # 计算点积
-    #     # mlx.core.sum(vec_a * vec_b) 会将所有元素相乘后求和，等同于向量点积
-    #     dot_product = mx.sum(vec_a * vec_b)
+        # 计算点积
+        # mlx.core.sum(vec_a * vec_b) 会将所有元素相乘后求和，等同于向量点积
+        dot_product = mx.sum(vec_a * vec_b)
 
-    #     # 计算L2范数（magnitude）
-    #     norm_a = mx.linalg.norm(vec_a)
-    #     norm_b = mx.linalg.norm(vec_b)
+        # 计算L2范数（magnitude）
+        norm_a = mx.linalg.norm(vec_a)
+        norm_b = mx.linalg.norm(vec_b)
 
-    #     # 避免除以零：如果任一范数为零，则相似度为零
-    #     denominator = norm_a * norm_b
+        # 避免除以零：如果任一范数为零，则相似度为零
+        denominator = norm_a * norm_b
         
-    #     # 使用mx.where处理除以零的情况。
-    #     # 如果denominator不为0，则执行 dot_product / denominator，否则返回0.0。
-    #     # 由于我们期望返回一个浮点数，这里直接取其item()。
-    #     # 注意：如果处理批量数据，通常不会用.item()。但对于两个单一向量，这是合适的。
-    #     similarity = mx.where(denominator != 0, dot_product / denominator, mx.array(0.0)).item()
+        # 使用mx.where处理除以零的情况。
+        # 如果denominator不为0，则执行 dot_product / denominator，否则返回0.0。
+        # 由于我们期望返回一个浮点数，这里直接取其item()。
+        # 注意：如果处理批量数据，通常不会用.item()。但对于两个单一向量，这是合适的。
+        similarity = mx.where(denominator != 0, dot_product / denominator, mx.array(0.0)).item()
         
-    #     return float(similarity)
+        return float(similarity)
 
     async def coreading_v5_compatible(self, messages: List[Dict], session_id: int):
         """

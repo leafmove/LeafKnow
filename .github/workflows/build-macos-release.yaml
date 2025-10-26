@@ -1,0 +1,81 @@
+name: 'Build and Release Tauri App'
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release
+    tags:
+      - 'v*'
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # for Arm based macs (M1 and above).
+            args: '--target aarch64-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './tauri-app/src-tauri -> target'
+
+      - name: install frontend dependencies
+        run: bun install
+        working-directory: ./tauri-app
+        
+        # 构建并发布版本（包含updater artifacts和latest.json）
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ./tauri-app
+          tauriScript: bun tauri
+          tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version.
+          releaseName: 'v__VERSION__'
+          releaseBody: |
+            ## 🚀 KnowledgeFocus v__VERSION__
+            
+            ### 🆕 Updates
+            - <!-- Please fill in the release notes here -->
+
+            ### 📦 Download Instructions
+            - **Intel chip Mac**: DO NOT support.
+            - **Apple Silicon Mac (M series chip)**: Download `KnowledgeFocus_x.x.x_aarch64.dmg`
+
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true # 自动生成latest.json
+          args: ${{ matrix.args }}

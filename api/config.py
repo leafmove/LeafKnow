@@ -1,27 +1,19 @@
 """
-LeafKnow 应用配置模块
+KnowledgeFocus 应用配置模块
 """
 from functools import wraps
 from uuid import uuid4
 from pathlib import Path
 
-# 内置模型配置
-BUILTMODELS = {
-    "EMBEDDING_MODEL": {
-        "LLAMACPPPYTHON": "https://huggingface.co/ggml-org/embeddinggemma-300M-qat-q4_0-GGUF/blob/main/embeddinggemma-300M-qat-Q4_0.gguf",
-        "MLXCOMMUNITY": "mlx-community/embeddinggemma-300m-4bit",
-    },
-    "EMBEDDING_DIMENSIONS" : 768,
-    "VLM_MODEL": {
-        "LLAMACPPPYTHON": "https://huggingface.co/NexaAI/Qwen3-VL-4B-Instruct-GGUF/blob/main/Qwen3-VL-4B-Instruct.Q4_K.gguf",
-        "MLXCOMMUNITY": "mlx-community/Qwen3-VL-4B-Instruct-3bit",
-    },
-    "VLM_MAX_CONTEXT_LENGTH": 256*1024,
-    "VLM_MAX_OUTPUT_TOKENS": 2048,
-}
+# 向量化参数
+EMBEDDING_DIMENSIONS = 768
+EMBEDDING_MODEL = "mlx-community/embeddinggemma-300m-4bit"
+
+# 视觉模型参数
+VLM_MODEL = "mlx-community/Qwen3-VL-4B-Instruct-3bit"
 
 # 测试用本地SQLite数据库路径
-TEST_DB_PATH = (Path.home() / "Library/Application Support/com.leafmove.leaf-know/sqlite.db").as_posix()
+TEST_DB_PATH = (Path.home() / "Library/Application Support/knowledge-focus.huozhong.in/knowledge-focus.db").as_posix()
 
 # 单例
 def singleton(cls):

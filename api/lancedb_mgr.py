@@ -1,4 +1,4 @@
-from config import singleton, BUILTMODELS
+from config import singleton, EMBEDDING_DIMENSIONS
 import lancedb
 from lancedb.pydantic import LanceModel, Vector
 from typing import List
@@ -9,7 +9,7 @@ logger = logging.getLogger()
 
 # Pydantic model for the tags table in LanceDB
 class Tags(LanceModel):
-    vector: Vector(BUILTMODELS['EMBEDDING_DIMENSIONS'])  # type: ignore
+    vector: Vector(EMBEDDING_DIMENSIONS)  # type: ignore
     text: str
     tag_id: int
 
@@ -19,7 +19,7 @@ class Tags(LanceModel):
 class VectorRecord(LanceModel):
     # 这是与SQLite中 t_child_chunks.vector_id 对应的值，我们用它来连接两个数据库
     vector_id: str
-    vector: Vector(BUILTMODELS['EMBEDDING_DIMENSIONS'])  # type: ignore
+    vector: Vector(EMBEDDING_DIMENSIONS)  # type: ignore
     # 在向量库中冗余一些元数据，可以极大地加速“预过滤”
     parent_chunk_id: int
     document_id: int
