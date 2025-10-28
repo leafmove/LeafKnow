@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(python:*)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(timeout:*)",
+      "Bash(set PYTHONIOENCODING=utf-8:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

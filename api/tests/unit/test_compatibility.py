@@ -17,11 +17,11 @@ def check_python_version():
         print("需要Python 3.x")
         return False
 
-    if version.minor < 10:
-        print("需要Python 3.10或更高版本")
+    if version.minor < 8:
+        print("需要Python 3.8或更高版本")
         return False
 
-    print(f"Python版本符合要求 (>=3.10)")
+    print(f"Python版本符合要求 (>=3.8)")
     return True
 
 def check_required_packages() -> List[Tuple[str, bool]]:
@@ -84,7 +84,7 @@ def main():
     python_ok = check_python_version()
 
     if not python_ok:
-        print("\n[FAIL] Python版本不符合要求，请升级到Python 3.10+")
+        print("\n[FAIL] Python版本不符合要求，请升级到Python 3.8+")
         sys.exit(1)
 
     # 检查包导入
