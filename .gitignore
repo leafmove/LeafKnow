@@ -44,3 +44,6 @@ coverage/
 # 临时文件
 *.tmp
 *.temp
+
+# Claude Code 设置文件
+.claude/settings.local.json
