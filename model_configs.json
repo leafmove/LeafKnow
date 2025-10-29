@@ -1,0 +1,38 @@
+{
+  "models": {
+    "Ollama deepseek-r1:7b": {
+      "name": "Ollama deepseek-r1:7b",
+      "model_id": "deepseek-r1:7b",
+      "provider": "ollama",
+      "base_url": "http://localhost:11434",
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2000,
+      "description": "本地Ollama模型: deepseek-r1:7b",
+      "is_local": true
+    },
+    "Ollama deepseek-r1:1.5b": {
+      "name": "Ollama deepseek-r1:1.5b",
+      "model_id": "deepseek-r1:1.5b",
+      "provider": "ollama",
+      "base_url": "http://localhost:11434",
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2000,
+      "description": "本地Ollama模型: deepseek-r1:1.5b",
+      "is_local": true
+    },
+    "DMX": {
+      "name": "DMX",
+      "model_id": "doubao-seed-1-6-flash-250615",
+      "provider": "openrouter",
+      "base_url": "https://www.dmxapi.cn/v1",
+      "api_key": "sk-3KdzUkc4E8wKKx7NnioVwV8R485m7EDqmL3IFBiD4UUOvlwr",
+      "temperature": 0.7,
+      "max_tokens": 2000,
+      "description": "测试",
+      "is_local": false
+    }
+  },
+  "current_model": "DMX"
+}
