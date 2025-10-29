@@ -49,7 +49,7 @@ LeafKnow/
 ### ⚡ 快速启动命令
 ```bash
 # 1. 启动API后端 (终端1)
-cd api
+cd core
 uv run main.py --port 60000 --host 127.0.0.1
 
 # 2. 启动前端应用 (终端2)

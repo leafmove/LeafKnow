@@ -110,13 +110,13 @@ python --version
 
 ### 2. 运行兼容性测试
 ```bash
-cd api
+cd core
 python test_compatibility.py
 ```
 
 ### 3. 测试项目启动
 ```bash
-cd api
+cd core
 uv sync
 
 uv run main.py --port 60000 --host 127.0.0.1
@@ -183,7 +183,7 @@ python3.11 -m venv --clear myenv
 
 1. **重新安装项目依赖**:
    ```bash
-   cd api
+   cd core
    rm -rf .venv  # 删除旧的虚拟环境
    uv sync       # 重新创建并安装依赖
    ```

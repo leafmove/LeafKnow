@@ -74,7 +74,7 @@ pub fn start_python_api(
                 Ok(mut path) => {
                     path.pop(); // 移动到上一级目录
                     path.pop(); // 移动到上一级目录
-                    path.push("api");
+                    path.push("core");
                     path
                 }
                 Err(e) => {
@@ -105,9 +105,9 @@ pub fn start_python_api(
         };
         println!("venv_parent_path: {:?}", venv_parent_path);
 
-        // 如果是生产环境，复制BaseDirectory::Resource/api/pyproject.toml到app_data_dir
+        // 如果是生产环境，复制BaseDirectory::Resource/core/pyproject.toml到app_data_dir
         if !cfg!(debug_assertions) {
-            let resource_api_path = match app_handle.path().resolve("api", BaseDirectory::Resource)
+            let resource_api_path = match app_handle.path().resolve("core", BaseDirectory::Resource)
             {
                 Ok(path) => path,
                 Err(e) => {
@@ -253,13 +253,13 @@ pub fn start_python_api(
         }
 
         // 通过uv运行main.py
-        // 如果是开发环境main.py在../api/main.py，否则在BaseDirectory::Resource/api/main.py
+        // 如果是开发环境main.py在../core/main.py，否则在BaseDirectory::Resource/core/main.py
         let script_path = if cfg!(debug_assertions) {
             venv_parent_path.join("main.py")
         } else {
             match app_handle
                 .path()
-                .resolve("api/main.py", BaseDirectory::Resource)
+                .resolve("core/main.py", BaseDirectory::Resource)
             {
                 Ok(path) => path,
                 Err(e) => {

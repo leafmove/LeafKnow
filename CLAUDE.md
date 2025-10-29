@@ -11,7 +11,7 @@ LeafKnow is a knowledge management and learning platform that combines AI-powere
 LeafKnow uses a hybrid architecture with separate backend and frontend processes:
 
 ### Backend (Python FastAPI)
-- **Location**: `api/` directory
+- **Location**: `core/` directory
 - **Port**: 60000 (default)
 - **Main Technologies**: FastAPI, SQLModel, LanceDB, Pydantic-AI
 - **Key Components**:
@@ -48,8 +48,8 @@ LeafKnow uses a hybrid architecture with separate backend and frontend processes
 **Method 1: Using Scripts (Recommended)**
 ```bash
 # Terminal 1: Start API backend
-cd api
-./api_standalone.sh  # Automatically reads Tauri config and sets up DB path
+cd core
+./core_standalone.sh  # Automatically reads Tauri config and sets up DB path
 
 # Terminal 2: Start frontend application
 cd leaf-know
@@ -59,7 +59,7 @@ cd leaf-know
 **Method 2: Manual Commands**
 ```bash
 # Terminal 1: Start API backend
-cd api
+cd core
 uv sync
 uv run main.py --port 60000 --host 127.0.0.1 --db-path "sqlite.db"
 
@@ -81,7 +81,7 @@ bun run dev
 
 **API Development Only**
 ```bash
-cd api
+cd core
 uv sync
 uv run main.py --port 60000 --host 127.0.0.1
 # API docs at http://127.0.0.1:60000/docs
@@ -104,13 +104,13 @@ bun run tauri build
 
 **Run Compatibility Tests**
 ```bash
-cd api
+cd core
 python test_compatibility.py  # Test Python version and dependencies
 ```
 
 **Run Single Test**
 ```bash
-cd api
+cd core
 uv run python test_agno.py  # Test agno library imports (if exists)
 ```
 
@@ -182,7 +182,7 @@ LeafKnow implements a sophisticated RAG (Retrieval-Augmented Generation) system 
 
 ```
 LeafKnow/
-├── api/                    # Python FastAPI backend
+├── core/                   # Python FastAPI backend
 │   ├── main.py            # FastAPI application entry point
 │   ├── models_mgr.py      # AI model management (multi-provider support)
 │   ├── model_config_mgr.py # Model configuration and validation
@@ -198,7 +198,7 @@ LeafKnow/
 │   ├── memory_mgr.py      # Conversation memory management
 │   ├── config.py          # Built-in model configurations
 │   ├── utils.py           # Shared utilities
-│   ├── api_standalone.sh  # API startup script (reads Tauri config)
+│   ├── core_standalone.sh  # Core startup script (reads Tauri config)
 │   ├── test_compatibility.py # Environment compatibility tests
 │   └── pyproject.toml     # Python dependencies
 ├── leaf-know/             # Tauri + React frontend
@@ -232,7 +232,7 @@ LeafKnow/
 - **WAL Mode**: SQLite uses WAL mode for better concurrency
 
 ### Built-in Model Configuration
-The project includes built-in model configurations in `api/config.py`:
+The project includes built-in model configurations in `core/config.py`:
 - **Embedding Models**: Support for LLAMACPPPYTHON and MLXCOMMUNITY backends
 - **VLM (Vision Language Models)**: Qwen3-VL-4B-Instruct with configurable context length
 - **Vector Dimensions**: 768 dimensions for embeddings
@@ -252,11 +252,11 @@ The project includes built-in model configurations in `api/config.py`:
 6. **jq** - Required for API startup script (reads Tauri config)
 
 ### Key Configuration Files
-- `api/pyproject.toml` - Python dependencies and project metadata
+- `core/pyproject.toml` - Python dependencies and project metadata
 - `leaf-know/package.json` - Node.js dependencies and scripts
 - `leaf-know/src-tauri/tauri.conf.json` - Tauri application configuration
 - `leaf-know/vite.config.ts` - Vite build configuration
-- `api/config.py` - Backend configuration and built-in model settings
+- `core/config.py` - Backend configuration and built-in model settings
 
 ## Development Workflow
 

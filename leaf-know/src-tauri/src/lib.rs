@@ -82,7 +82,7 @@ impl ApiProcessManager {
             let cleanup_patterns = [
                 "uv run --directory",
                 "main.py --host 127.0.0.1 --port 60000",
-                "/api/main.py",
+                "/core/main.py",
             ];
 
             for pattern in &cleanup_patterns {

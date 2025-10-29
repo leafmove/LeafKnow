@@ -8,7 +8,9 @@
       "Bash(pip install:*)",
       "Bash(pip uninstall:*)",
       "Bash(timeout:*)",
-      "Bash(set PYTHONIOENCODING=utf-8:*)"
+      "Bash(set PYTHONIOENCODING=utf-8:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

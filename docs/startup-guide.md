@@ -89,14 +89,14 @@ jq --version
 
 #### 第1步：启动API后端
 ```bash
-# 进入API目录
-cd api
+# 进入Core目录
+cd core
 
 # 安装Python依赖
 uv sync
 
-# 启动API服务器 (Windows)
-.\api_standalone.sh
+# 启动Core服务器 (Windows)
+.\core_standalone.sh
 
 # 或手动启动 (跨平台)
 uv run main.py --port 60000 --host 127.0.0.1 --db-path "sqlite.db"
@@ -146,12 +146,12 @@ bun run tauri build
 
 ## 📁 项目文件说明
 
-### API后端 (`/api`)
+### Core后端 (`/core`)
 - `main.py`: FastAPI主应用入口
 - `chatsession_*.py`: 聊天会话管理
 - `models_*.py`: AI模型管理
 - `db_mgr.py`: 数据库管理
-- `api_standalone.sh`: 一键启动脚本
+- `core_standalone.sh`: 一键启动脚本
 
 ### 前端应用 (`/leaf-know`)
 - `src/`: React源代码

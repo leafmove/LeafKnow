@@ -39,7 +39,7 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
-          "name": "../../../../api/.venv/bin/python",
+          "name": "../../../../core/.venv/bin/python",
           "sidecar": true,
           "args": true
         }
