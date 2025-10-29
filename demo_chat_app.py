@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from chat_app_enhanced import (
     DatabaseManager, UserManager, AgentManager,
-    ConversationManager, EnhancedChatApp, AgentConfig
+    SessionManager, ConversationManager, EnhancedChatApp, AgentConfig
 )
 
 
@@ -27,6 +27,7 @@ def demo_multi_user_system():
     db_manager = DatabaseManager()
     user_manager = UserManager(db_manager)
     agent_manager = AgentManager(db_manager)
+    session_manager = SessionManager(db_manager)
     conversation_manager = ConversationManager(db_manager)
 
     try:
@@ -142,31 +143,40 @@ def demo_multi_user_system():
                 print(f"      提供商: {agent.provider}")
                 print(f"      系统提示: {agent.system_prompt[:50]}...")
 
-        # 5. 演示对话历史
+        # 5. 演示对话历史（使用会话功能）
         print("\n5. 对话历史演示...")
         alice = created_users[0]
         alice_agents = agent_manager.get_user_agents(alice.id)
         if alice_agents:
-            # 添加一些示例对话
+            # 创建一个演示会话
+            demo_session = session_manager.create_session(
+                alice.id,
+                "Python项目讨论",
+                "关于Python项目优化的对话",
+                alice_agents[0].id
+            )
+            print(f"   [OK] 创建演示会话: {demo_session.title}")
+
+            # 添加一些示例对话到会话
             conversation_manager.add_message(
-                alice.id, alice_agents[0].id, "user",
+                demo_session.id, alice.id, alice_agents[0].id, "user",
                 "你好，我需要帮助处理一个Python项目"
             )
             conversation_manager.add_message(
-                alice.id, alice_agents[0].id, "assistant",
+                demo_session.id, alice.id, alice_agents[0].id, "assistant",
                 "你好！我很乐意帮助你处理Python项目。请告诉我你遇到了什么问题？"
             )
             conversation_manager.add_message(
-                alice.id, alice_agents[0].id, "user",
+                demo_session.id, alice.id, alice_agents[0].id, "user",
                 "我想优化我的代码性能"
             )
             conversation_manager.add_message(
-                alice.id, alice_agents[0].id, "assistant",
+                demo_session.id, alice.id, alice_agents[0].id, "assistant",
                 "代码性能优化有很多方面，让我们逐一分析..."
             )
 
-            history = conversation_manager.get_conversation_history(alice.id, alice_agents[0].id, 10)
-            print(f"   {alice.username} 的对话历史:")
+            history = conversation_manager.get_conversation_history(demo_session.id, 10)
+            print(f"   {alice.username} 的对话历史 (会话: {demo_session.title}):")
             for i, msg in enumerate(history[:4], 1):
                 role = "用户" if msg["role"] == "user" else "助手"
                 content = msg["content"][:50] + "..." if len(msg["content"]) > 50 else msg["content"]
