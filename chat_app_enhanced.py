@@ -70,6 +70,18 @@ class AgentConfig:
     updated_at: datetime = field(default_factory=datetime.now)
 
 
+@dataclass
+class SessionConfig:
+    """会话配置类"""
+    user_id: str
+    title: str
+    description: Optional[str] = None
+    current_agent_id: Optional[str] = None
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+
 class DatabaseManager:
     """数据库管理器"""
 
@@ -155,19 +167,44 @@ class DatabaseManager:
             )
         ''')
 
-        # 对话历史表
+        # 会话表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                current_agent_id TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (current_agent_id) REFERENCES agents (id) ON DELETE SET NULL
+            )
+        ''')
+
+        # 对话历史表（添加session_id支持）
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
+                session_id TEXT,
                 user_id TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
                 role TEXT NOT NULL,  -- 'user' or 'assistant'
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
                 FOREIGN KEY (agent_id) REFERENCES agents (id) ON DELETE CASCADE
             )
         ''')
+
+        # 为现有数据库添加session_id列（如果不存在）
+        try:
+            cursor.execute("ALTER TABLE conversations ADD COLUMN session_id TEXT")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id)")
+        except:
+            # 列可能已存在，忽略错误
+            pass
 
         self.connection.commit()
         cursor.close()
@@ -430,14 +467,113 @@ class AgentManager:
         return affected_rows > 0
 
 
+class SessionManager:
+    """会话管理器"""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def create_session(self, user_id: str, title: str, description: str = None, current_agent_id: str = None) -> SessionConfig:
+        """创建新会话"""
+        session_id = str(uuid.uuid4())
+        query = '''
+            INSERT INTO sessions (id, user_id, title, description, current_agent_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        '''
+        params = (session_id, user_id, title, description, current_agent_id, datetime.now(), datetime.now())
+        self.db.execute_query(query, params)
+        return self.get_session(session_id)
+
+    def get_session(self, session_id: str) -> Optional[SessionConfig]:
+        """获取会话"""
+        query = 'SELECT * FROM sessions WHERE id = ?'
+        row = self.db.execute_query(query, (session_id,), fetch=True)
+        if row:
+            return SessionConfig(
+                id=row['id'],
+                user_id=row['user_id'],
+                title=row['title'],
+                description=row['description'],
+                current_agent_id=row['current_agent_id'],
+                created_at=datetime.fromisoformat(row['created_at']),
+                updated_at=datetime.fromisoformat(row['updated_at'])
+            )
+        return None
+
+    def get_user_sessions(self, user_id: str) -> List[SessionConfig]:
+        """获取用户的所有会话"""
+        query = 'SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC'
+        rows = self.db.execute_query(query, (user_id,), fetch=True, fetch_all=True)
+        if not rows:
+            return []
+        return [SessionConfig(
+                id=row['id'],
+                user_id=row['user_id'],
+                title=row['title'],
+                description=row['description'],
+                current_agent_id=row['current_agent_id'],
+                created_at=datetime.fromisoformat(row['created_at']),
+                updated_at=datetime.fromisoformat(row['updated_at'])
+            ) for row in rows]
+
+    def update_session(self, session_id: str, title: str = None, description: str = None, current_agent_id: str = None) -> bool:
+        """更新会话信息"""
+        updates = []
+        params = []
+
+        if title:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if current_agent_id:
+            updates.append("current_agent_id = ?")
+            params.append(current_agent_id)
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = ?")
+        params.append(datetime.now())
+        params.append(session_id)
+
+        query = f'UPDATE sessions SET {", ".join(updates)} WHERE id = ?'
+        affected_rows = self.db.execute_query(query, tuple(params))
+        return affected_rows > 0
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除会话"""
+        query = 'DELETE FROM sessions WHERE id = ?'
+        affected_rows = self.db.execute_query(query, (session_id,))
+        return affected_rows > 0
+
+    def update_session_timestamp(self, session_id: str) -> bool:
+        """更新会话最后活动时间"""
+        query = 'UPDATE sessions SET updated_at = ? WHERE id = ?'
+        affected_rows = self.db.execute_query(query, (datetime.now(), session_id))
+        return affected_rows > 0
+
+
 class ConversationManager:
     """对话历史管理器"""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
 
-    def add_message(self, user_id: str, agent_id: str, role: str, content: str) -> str:
+    def add_message(self, session_id: str, user_id: str, agent_id: str, role: str, content: str) -> str:
         """添加消息到对话历史"""
+        message_id = str(uuid.uuid4())
+        query = '''
+            INSERT INTO conversations (id, session_id, user_id, agent_id, role, content)
+            VALUES (?, ?, ?, ?, ?, ?)
+        '''
+        params = (message_id, session_id, user_id, agent_id, role, content)
+        self.db.execute_query(query, params)
+        return message_id
+
+    def add_message_legacy(self, user_id: str, agent_id: str, role: str, content: str) -> str:
+        """添加消息到对话历史（兼容旧版本，不使用session_id）"""
         message_id = str(uuid.uuid4())
         query = '''
             INSERT INTO conversations (id, user_id, agent_id, role, content)
@@ -447,12 +583,26 @@ class ConversationManager:
         self.db.execute_query(query, params)
         return message_id
 
-    def get_conversation_history(self, user_id: str, agent_id: str, limit: int = 50) -> List[Dict]:
-        """获取对话历史"""
+    def get_conversation_history(self, session_id: str, limit: int = 50) -> List[Dict]:
+        """获取会话的对话历史"""
         query = '''
             SELECT role, content, timestamp
             FROM conversations
-            WHERE user_id = ? AND agent_id = ?
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        '''
+        rows = self.db.execute_query(query, (session_id, limit), fetch=True, fetch_all=True)
+        if not rows:
+            return []
+        return [{"role": row['role'], "content": row['content'], "timestamp": row['timestamp']} for row in rows]
+
+    def get_conversation_history_legacy(self, user_id: str, agent_id: str, limit: int = 50) -> List[Dict]:
+        """获取对话历史（兼容旧版本）"""
+        query = '''
+            SELECT role, content, timestamp
+            FROM conversations
+            WHERE user_id = ? AND agent_id = ? AND session_id IS NULL
             ORDER BY timestamp DESC
             LIMIT ?
         '''
@@ -461,14 +611,19 @@ class ConversationManager:
             return []
         return [{"role": row['role'], "content": row['content'], "timestamp": row['timestamp']} for row in rows]
 
-    def clear_conversation_history(self, user_id: str, agent_id: str = None) -> bool:
+    def clear_conversation_history(self, session_id: str = None, user_id: str = None, agent_id: str = None) -> bool:
         """清除对话历史"""
-        if agent_id:
-            query = 'DELETE FROM conversations WHERE user_id = ? AND agent_id = ?'
+        if session_id:
+            query = 'DELETE FROM conversations WHERE session_id = ?'
+            params = (session_id,)
+        elif user_id and agent_id:
+            query = 'DELETE FROM conversations WHERE user_id = ? AND agent_id = ? AND session_id IS NULL'
             params = (user_id, agent_id)
-        else:
-            query = 'DELETE FROM conversations WHERE user_id = ?'
+        elif user_id:
+            query = 'DELETE FROM conversations WHERE user_id = ? AND session_id IS NULL'
             params = (user_id,)
+        else:
+            return False
 
         affected_rows = self.db.execute_query(query, params)
         return affected_rows > 0
@@ -512,11 +667,13 @@ class EnhancedChatApp:
         self.db_manager = DatabaseManager(DatabaseType.SQLITE, "autobox_id.db")
         self.user_manager = UserManager(self.db_manager)
         self.agent_manager = AgentManager(self.db_manager)
+        self.session_manager = SessionManager(self.db_manager)
         self.conversation_manager = ConversationManager(self.db_manager)
 
-        # 当前用户和Agent
+        # 当前用户、Agent和会话
         self.current_user_id = None
         self.current_agent_id = None
+        self.current_session_id = None
 
         # 应用设置
         self.use_streaming = True
@@ -579,6 +736,24 @@ class EnhancedChatApp:
         current_agent = self.agent_manager.get_user_default_agent(default_user.id)
         if current_agent:
             self.current_agent_id = current_agent.id
+
+        # 创建默认会话（如果不存在）
+        user_sessions = self.session_manager.get_user_sessions(default_user.id)
+        if not user_sessions:
+            # 创建默认会话
+            default_session = self.session_manager.create_session(
+                default_user.id,
+                "默认会话",
+                "默认的对话会话",
+                self.current_agent_id
+            )
+            self.current_session_id = default_session.id
+        else:
+            # 使用最近的会话
+            self.current_session_id = user_sessions[0].id
+            # 更新会话的当前Agent
+            if self.current_agent_id:
+                self.session_manager.update_session(self.current_session_id, current_agent_id=self.current_agent_id)
 
     def create_agent_instance(self, config: AgentConfig):
         """根据配置创建模型实例"""
@@ -1201,6 +1376,330 @@ class EnhancedChatApp:
         except ValueError:
             print("[错误] 请输入有效数字")
 
+    def session_management_menu(self) -> bool:
+        """会话管理菜单"""
+        print("\n" + "=" * 60)
+        print("会话管理")
+        print("=" * 60)
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        sessions = self.session_manager.get_user_sessions(current_user.id)
+        current_session = self.session_manager.get_session(self.current_session_id) if self.current_session_id else None
+
+        print(f"当前用户: {current_user.username}")
+        if current_session:
+            current_agent = self.agent_manager.get_agent(current_session.current_agent_id) if current_session.current_agent_id else None
+            agent_name = current_agent.name if current_agent else "未设置"
+            print(f"当前会话: {current_session.title} (Agent: {agent_name})")
+        else:
+            print("当前会话: 未设置")
+
+        print("\n会话列表:")
+        for i, session in enumerate(sessions, 1):
+            current_mark = " [当前]" if session.id == self.current_session_id else ""
+            current_agent = self.agent_manager.get_agent(session.current_agent_id) if session.current_agent_id else None
+            agent_name = current_agent.name if current_agent else "未设置"
+            print(f"{i:2d}. {session.title}{current_mark} (Agent: {agent_name})")
+
+        print(f"{len(sessions)+1:2d}. 新建会话")
+        print(f"{len(sessions)+2:2d}. 切换会话")
+        print(f"{len(sessions)+3:2d}. 编辑会话")
+        print(f"{len(sessions)+4:2d}. 删除会话")
+        print("0. 返回")
+
+        try:
+            choice = input("\n请选择操作: ").strip()
+            choice_num = int(choice)
+
+            if choice_num == 0:
+                return False
+            elif 1 <= choice_num <= len(sessions):
+                # 切换会话
+                selected_session = sessions[choice_num - 1]
+                self.current_session_id = selected_session.id
+                # 更新当前Agent
+                if selected_session.current_agent_id:
+                    self.current_agent_id = selected_session.current_agent_id
+                print(f"[OK] 已切换到会话: {selected_session.title}")
+                return True
+            elif choice_num == len(sessions) + 1:
+                # 新建会话
+                self.create_session_dialog()
+                return True
+            elif choice_num == len(sessions) + 2:
+                # 切换会话
+                self.switch_session_dialog()
+                return True
+            elif choice_num == len(sessions) + 3:
+                # 编辑会话
+                self.edit_session_dialog()
+                return True
+            elif choice_num == len(sessions) + 4:
+                # 删除会话
+                self.delete_session_dialog()
+                return True
+            else:
+                print("[错误] 无效选择")
+                return True
+        except ValueError:
+            print("[错误] 请输入有效数字")
+            return True
+
+    def create_session_dialog(self):
+        """创建新会话对话框"""
+        print("\n创建新会话")
+        print("-" * 30)
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+
+        title = input("会话标题: ").strip()
+        if not title:
+            print("[错误] 会话标题不能为空")
+            return
+
+        # 检查标题是否已存在
+        existing_sessions = self.session_manager.get_user_sessions(current_user.id)
+        if any(session.title == title for session in existing_sessions):
+            print("[错误] 会话标题已存在")
+            return
+
+        description = input("会话描述 (可选): ").strip() or None
+
+        # 选择Agent
+        agents = self.agent_manager.get_user_agents(current_user.id)
+        if not agents:
+            print("[错误] 没有可用的Agent")
+            return
+
+        print("\n选择会话Agent:")
+        for i, agent in enumerate(agents, 1):
+            default_mark = " [默认]" if agent.is_default else ""
+            print(f"{i}. {agent.name}{default_mark} ({agent.provider}: {agent.model_id})")
+
+        try:
+            agent_choice = int(input("选择Agent编号: ")) - 1
+            if 0 <= agent_choice < len(agents):
+                selected_agent = agents[agent_choice]
+            else:
+                print("[错误] 无效选择")
+                return
+        except ValueError:
+            print("[错误] 请输入有效数字")
+            return
+
+        try:
+            new_session = self.session_manager.create_session(
+                current_user.id,
+                title,
+                description,
+                selected_agent.id
+            )
+            print(f"[OK] 会话已创建: {new_session.title}")
+
+            # 询问是否切换到新会话
+            switch = input("是否切换到新会话? (y/n): ").strip().lower()
+            if switch == 'y':
+                self.current_session_id = new_session.id
+                self.current_agent_id = selected_agent.id
+                print(f"[OK] 已切换到会话: {new_session.title}")
+
+        except Exception as e:
+            print(f"[错误] 创建会话失败: {str(e)}")
+
+    def switch_session_dialog(self):
+        """切换会话对话框"""
+        print("\n切换会话")
+        print("-" * 30)
+
+        if not self.current_session_id:
+            print("[错误] 当前没有选择会话")
+            return
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        sessions = self.session_manager.get_user_sessions(current_user.id)
+        other_sessions = [s for s in sessions if s.id != self.current_session_id]
+
+        if not other_sessions:
+            print("[错误] 没有其他会话")
+            return
+
+        print("选择要切换的会话:")
+        for i, session in enumerate(other_sessions, 1):
+            current_agent = self.agent_manager.get_agent(session.current_agent_id) if session.current_agent_id else None
+            agent_name = current_agent.name if current_agent else "未设置"
+            print(f"{i}. {session.title} (Agent: {agent_name})")
+
+        try:
+            choice = int(input("选择会话编号: ")) - 1
+            if 0 <= choice < len(other_sessions):
+                selected_session = other_sessions[choice]
+                self.current_session_id = selected_session.id
+                # 更新当前Agent
+                if selected_session.current_agent_id:
+                    self.current_agent_id = selected_session.current_agent_id
+                print(f"[OK] 已切换到会话: {selected_session.title}")
+            else:
+                print("[错误] 无效选择")
+        except ValueError:
+            print("[错误] 请输入有效数字")
+
+    def edit_session_dialog(self):
+        """编辑会话对话框"""
+        print("\n编辑会话")
+        print("-" * 30)
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        sessions = self.session_manager.get_user_sessions(current_user.id)
+
+        if not sessions:
+            print("[错误] 没有会话")
+            return
+
+        print("选择要编辑的会话:")
+        for i, session in enumerate(sessions, 1):
+            current_mark = " [当前]" if session.id == self.current_session_id else ""
+            print(f"{i}. {session.title}{current_mark}")
+
+        try:
+            choice = int(input("选择会话编号: ")) - 1
+            if 0 <= choice < len(sessions):
+                selected_session = sessions[choice]
+
+                new_title = input(f"新标题 [{selected_session.title}]: ").strip() or selected_session.title
+                new_description = input(f"新描述 [{selected_session.description}]: ").strip() or selected_session.description
+
+                # 选择Agent
+                agents = self.agent_manager.get_user_agents(current_user.id)
+                if not agents:
+                    print("[错误] 没有可用的Agent")
+                    return
+
+                print("\n选择会话Agent:")
+                current_agent = self.agent_manager.get_agent(selected_session.current_agent_id) if selected_session.current_agent_id else None
+                current_agent_index = agents.index(current_agent) if current_agent and current_agent in agents else 0
+
+                for i, agent in enumerate(agents, 1):
+                    default_mark = " [默认]" if agent.is_default else ""
+                    current_mark = " [当前]" if agent.id == selected_session.current_agent_id else ""
+                    print(f"{i}. {agent.name}{default_mark}{current_mark}")
+
+                try:
+                    agent_choice = int(input(f"选择Agent编号 [{current_agent_index + 1}]: ") or str(current_agent_index + 1)) - 1
+                    if 0 <= agent_choice < len(agents):
+                        selected_agent = agents[agent_choice]
+                    else:
+                        print("[错误] 无效选择")
+                        return
+                except ValueError:
+                    print("[错误] 请输入有效数字")
+                    return
+
+                if (new_title == selected_session.title and
+                    new_description == selected_session.description and
+                    selected_agent.id == selected_session.current_agent_id):
+                    print("[提示] 没有修改")
+                    return
+
+                if self.session_manager.update_session(selected_session.id, new_title, new_description, selected_agent.id):
+                    print(f"[OK] 会话已更新: {new_title}")
+
+                    # 如果编辑的是当前会话，更新当前Agent
+                    if selected_session.id == self.current_session_id:
+                        self.current_agent_id = selected_agent.id
+                else:
+                    print("[错误] 更新会话失败")
+            else:
+                print("[错误] 无效选择")
+        except ValueError:
+            print("[错误] 请输入有效数字")
+
+    def delete_session_dialog(self):
+        """删除会话对话框"""
+        print("\n删除会话")
+        print("-" * 30)
+        print("⚠️  警告：此操作将删除会话及其所有对话历史")
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        sessions = self.session_manager.get_user_sessions(current_user.id)
+
+        if len(sessions) <= 1:
+            print("[错误] 至少需要保留一个会话")
+            return
+
+        # 不允许删除当前会话
+        other_sessions = [s for s in sessions if s.id != self.current_session_id]
+        if not other_sessions:
+            print("[错误] 无法删除唯一的会话")
+            return
+
+        print("选择要删除的会话:")
+        for i, session in enumerate(other_sessions, 1):
+            current_agent = self.agent_manager.get_agent(session.current_agent_id) if session.current_agent_id else None
+            agent_name = current_agent.name if current_agent else "未设置"
+            print(f"{i}. {session.title} (Agent: {agent_name})")
+
+        try:
+            choice = int(input("选择会话编号: ")) - 1
+            if 0 <= choice < len(other_sessions):
+                selected_session = other_sessions[choice]
+
+                confirm = input(f"确认删除会话 {selected_session.title}? (yes/no): ").strip().lower()
+                if confirm == 'yes':
+                    if self.session_manager.delete_session(selected_session.id):
+                        print(f"[OK] 会话已删除: {selected_session.title}")
+                    else:
+                        print("[错误] 删除会话失败")
+                else:
+                    print("[提示] 操作已取消")
+            else:
+                print("[错误] 无效选择")
+        except ValueError:
+            print("[错误] 请输入有效数字")
+
+    def switch_agent_in_session(self):
+        """在当前会话中切换Agent"""
+        if not self.current_session_id:
+            print("[错误] 当前没有选择会话")
+            return
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        agents = self.agent_manager.get_user_agents(current_user.id)
+
+        if not agents:
+            print("[错误] 没有可用的Agent")
+            return
+
+        print("\n切换会话Agent")
+        print("-" * 30)
+
+        current_session = self.session_manager.get_session(self.current_session_id)
+        print(f"当前会话: {current_session.title}")
+
+        current_agent = self.agent_manager.get_agent(self.current_agent_id) if self.current_agent_id else None
+        print(f"当前Agent: {current_agent.name if current_agent else '未设置'}")
+
+        print("\n选择新的Agent:")
+        for i, agent in enumerate(agents, 1):
+            current_mark = " [当前]" if agent.id == self.current_agent_id else ""
+            default_mark = " [默认]" if agent.is_default else ""
+            print(f"{i}. {agent.name}{current_mark}{default_mark} ({agent.provider}: {agent.model_id})")
+
+        try:
+            choice = int(input("选择Agent编号: ")) - 1
+            if 0 <= choice < len(agents):
+                selected_agent = agents[choice]
+
+                # 更新会话的当前Agent
+                if self.session_manager.update_session(self.current_session_id, current_agent_id=selected_agent.id):
+                    self.current_agent_id = selected_agent.id
+                    print(f"[OK] 已切换到Agent: {selected_agent.name}")
+                else:
+                    print("[错误] 切换Agent失败")
+            else:
+                print("[错误] 无效选择")
+        except ValueError:
+            print("[错误] 请输入有效数字")
+
     def chat_non_streaming(self, user_prompt: str) -> str:
         """非流式聊天"""
         agent = self.get_current_agent()
@@ -1258,7 +1757,7 @@ class EnhancedChatApp:
         """交互式聊天界面"""
         print("=" * 60)
         print("增强版 Agno AI聊天应用")
-        print("支持多用户、Agent管理、数据库存储")
+        print("支持多用户、会话管理、Agent管理、数据库存储")
         print("=" * 60)
 
         # 检查并初始化
@@ -1268,6 +1767,13 @@ class EnhancedChatApp:
 
         current_user = self.user_manager.get_user(self.current_user_id)
         print(f"当前用户: {current_user.username}")
+
+        if not self.current_session_id:
+            print("[错误] 没有当前会话")
+            return
+
+        current_session = self.session_manager.get_session(self.current_session_id)
+        print(f"当前会话: {current_session.title}")
 
         if not self.current_agent_id:
             print("[错误] 没有当前Agent")
@@ -1280,14 +1786,21 @@ class EnhancedChatApp:
         print("\n=== 开始聊天 ===")
         print("命令:")
         print("  'users' - 用户管理")
+        print("  'sessions' - 会话管理")
         print("  'agents' - Agent管理")
+        print("  'switch-agent' - 在当前会话中切换Agent")
+        print("  'current' - 查看当前会话信息")
         print("  'history' - 查看对话历史")
         print("  'stream' - 切换流式/非流式模式")
         print("  'quit' 或 'exit' - 退出")
 
         while True:
             try:
-                user_input = input(f"\n用户 [{current_agent.name}]: ").strip()
+                # 获取当前会话和Agent信息
+                current_session = self.session_manager.get_session(self.current_session_id)
+                current_agent = self.agent_manager.get_agent(self.current_agent_id)
+
+                user_input = input(f"\n[{current_session.title}] [{current_agent.name}]: ").strip()
 
                 if user_input.lower() in ['quit', 'exit']:
                     print("再见!")
@@ -1297,10 +1810,23 @@ class EnhancedChatApp:
                     while self.user_management_menu():
                         pass
                     continue
+                elif user_input.lower() == 'sessions':
+                    # 会话管理
+                    while self.session_management_menu():
+                        pass
+                    continue
                 elif user_input.lower() == 'agents':
                     # Agent管理
                     while self.agent_management_menu():
                         pass
+                    continue
+                elif user_input.lower() == 'switch-agent':
+                    # 在当前会话中切换Agent
+                    self.switch_agent_in_session()
+                    continue
+                elif user_input.lower() == 'current':
+                    # 查看当前会话信息
+                    self.show_current_session_info()
                     continue
                 elif user_input.lower() == 'history':
                     # 查看对话历史
@@ -1314,13 +1840,17 @@ class EnhancedChatApp:
                 elif not user_input:
                     continue
 
-                # 保存到对话历史
+                # 保存到对话历史（使用会话ID）
                 self.conversation_manager.add_message(
+                    self.current_session_id,
                     self.current_user_id,
                     self.current_agent_id,
                     "user",
                     user_input
                 )
+
+                # 更新会话最后活动时间
+                self.session_manager.update_session_timestamp(self.current_session_id)
 
                 print("AI: ", end="", flush=True)
 
@@ -1336,6 +1866,7 @@ class EnhancedChatApp:
                         # 保存AI回复到历史
                         if full_response.strip():
                             self.conversation_manager.add_message(
+                                self.current_session_id,
                                 self.current_user_id,
                                 self.current_agent_id,
                                 "assistant",
@@ -1354,6 +1885,7 @@ class EnhancedChatApp:
                         # 保存AI回复到历史
                         if response.strip() and not response.startswith("[错误]"):
                             self.conversation_manager.add_message(
+                                self.current_session_id,
                                 self.current_user_id,
                                 self.current_agent_id,
                                 "assistant",
@@ -1372,19 +1904,53 @@ class EnhancedChatApp:
         # 关闭数据库连接
         self.db_manager.close()
 
+    def show_current_session_info(self):
+        """显示当前会话信息"""
+        print("\n" + "=" * 60)
+        print("当前会话信息")
+        print("=" * 60)
+
+        current_user = self.user_manager.get_user(self.current_user_id)
+        current_session = self.session_manager.get_session(self.current_session_id)
+        current_agent = self.agent_manager.get_agent(self.current_agent_id)
+
+        print(f"用户: {current_user.username}")
+        print(f"会话: {current_session.title}")
+        if current_session.description:
+            print(f"描述: {current_session.description}")
+        print(f"创建时间: {current_session.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"最后更新: {current_session.updated_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Agent: {current_agent.name} ({current_agent.provider}: {current_agent.model_id})")
+
+        # 显示对话历史统计
+        history = self.conversation_manager.get_conversation_history(self.current_session_id, 1000)
+        message_count = len(history)
+        user_messages = len([m for m in history if m["role"] == "user"])
+        ai_messages = len([m for m in history if m["role"] == "assistant"])
+
+        print(f"\n对话统计:")
+        print(f"  总消息数: {message_count}")
+        print(f"  用户消息: {user_messages}")
+        print(f"  AI回复: {ai_messages}")
+
     def show_conversation_history(self):
         """显示对话历史"""
         print("\n" + "=" * 60)
         print("对话历史")
         print("=" * 60)
 
-        if not self.current_agent_id:
-            print("[错误] 没有选择当前Agent")
+        if not self.current_session_id:
+            print("[错误] 没有选择当前会话")
             return
 
-        history = self.conversation_manager.get_conversation_history(
-            self.current_user_id, self.current_agent_id, 20
-        )
+        current_session = self.session_manager.get_session(self.current_session_id)
+        current_agent = self.agent_manager.get_agent(self.current_agent_id)
+
+        print(f"会话: {current_session.title}")
+        print(f"Agent: {current_agent.name}")
+        print("-" * 60)
+
+        history = self.conversation_manager.get_conversation_history(self.current_session_id, 20)
 
         if not history:
             print("暂无对话历史")
@@ -1392,7 +1958,26 @@ class EnhancedChatApp:
 
         for i, message in enumerate(history, 1):
             role_icon = "👤" if message["role"] == "user" else "🤖"
-            print(f"{i}. {role_icon} {message['content'][:100]}{'...' if len(message['content']) > 100 else ''}")
+            timestamp = message.get("timestamp", "")
+            if timestamp:
+                try:
+                    # 尝试解析时间戳
+                    if isinstance(timestamp, str):
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        time_str = dt.strftime('%H:%M:%S')
+                    else:
+                        time_str = str(timestamp)
+                except:
+                    time_str = str(timestamp)
+            else:
+                time_str = ""
+
+            content = message['content'][:100] + ('...' if len(message['content']) > 100 else '')
+            if time_str:
+                print(f"{i:2d}. [{time_str}] {role_icon} {content}")
+            else:
+                print(f"{i:2d}. {role_icon} {content}")
+
             if i % 10 == 0:  # 每10条暂停一次
                 input("\n按回车键继续...")
 

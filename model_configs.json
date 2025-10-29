@@ -1,5 +1,27 @@
 {
   "models": {
+    "OpenAI GPT-4o": {
+      "name": "OpenAI GPT-4o",
+      "model_id": "gpt-4o",
+      "provider": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2000,
+      "description": "OpenAI的GPT-4o模型，更强的推理能力",
+      "is_local": false
+    },
+    "OpenRouter Mixtral": {
+      "name": "OpenRouter Mixtral",
+      "model_id": "mistralai/mixtral-8x7b-instruct",
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": null,
+      "temperature": 0.7,
+      "max_tokens": 2000,
+      "description": "OpenRouter的Mixtral模型",
+      "is_local": false
+    },
     "Ollama deepseek-r1:7b": {
       "name": "Ollama deepseek-r1:7b",
       "model_id": "deepseek-r1:7b",
