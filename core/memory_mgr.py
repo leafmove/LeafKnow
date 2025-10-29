@@ -15,7 +15,8 @@ from core.db_mgr import ChatMessage
 # from chatsession_mgr import ChatSessionMgr
 # from model_config_mgr import ModelConfigMgr, ModelUseInterface
 # from pydantic import BaseModel
-from pydantic_ai import Tool, format_as_xml
+from core.agno.tools.function import Function as Tool
+import json
 import logging
 
 logger = logging.getLogger()
@@ -71,13 +72,22 @@ class MemoryMgr:
     def calculate_tools_tokens(self, tools: List[Tool]) -> int:
         result = 0
         for tool in tools:
-            log = format_as_xml({
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.function_schema.json_schema
-            })
-            # logger.info(log)
-            result += num_tokens_from_string(log)
+            if hasattr(tool, 'function') and hasattr(tool.function, '__name__'):
+                tool_name = tool.function.__name__
+            elif hasattr(tool, 'name'):
+                tool_name = tool.name
+            else:
+                tool_name = "unknown_tool"
+
+            # Create a simple XML representation for token counting
+            tool_xml = f"""
+            <tool>
+                <name>{tool_name}</name>
+                <description>{getattr(tool, 'description', 'No description')}</description>
+                <parameters>{json.dumps(getattr(tool, 'parameters', {}))}</parameters>
+            </tool>
+            """
+            result += num_tokens_from_string(tool_xml.strip())
         return result
 
     # 计算字符串的token数

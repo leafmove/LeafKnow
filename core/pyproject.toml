@@ -7,7 +7,6 @@ dependencies = [
     "fastapi>=0.104.0",
     "lancedb>=0.15.0",
     "markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.0",
-    "pydantic-ai[sme]>=0.0.14",
     "sqlmodel>=0.0.19",
     "tiktoken>=0.5.0",
     "uvicorn>=0.24.0",

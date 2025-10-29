@@ -12,19 +12,11 @@ from core.db_mgr import (
     CapabilityAssignment,
     SystemConfig,
 )
-from openai import AsyncOpenAI
-from google.genai import Client
-from google.genai.types import HttpOptions
 from pydantic import BaseModel
-from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.groq import GroqProvider
-from pydantic_ai.models.groq import GroqModel
+from core.agno.models.openai.chat import OpenAIChat
+from core.agno.models.anthropic.claude import Claude
+from core.agno.models.google.gemini import Gemini
+from core.agno.models.groq.groq import Groq
 import logging
 
 logger = logging.getLogger()
@@ -529,7 +521,7 @@ class ModelConfigMgr:
                 print(f"Error toggling model enabled state for model {model_id}: {e}")
                 return False
 
-    def model_adapter(self, model_interface: ModelUseInterface) -> Model | None:
+    def model_adapter(self, model_interface: ModelUseInterface):
         model_identifier = model_interface.model_identifier
         base_url = model_interface.base_url
         api_key = model_interface.api_key
@@ -537,52 +529,39 @@ class ModelConfigMgr:
         proxy = self.get_proxy_value()
         http_client = httpx.AsyncClient(proxy=proxy.value if proxy is not None and use_proxy else None)
         provider_type = model_interface.provider_type
-        
+
         if provider_type == "openai" or provider_type == "grok":
-            openai_client = AsyncOpenAI(
+            model = OpenAIChat(
+                id=model_identifier,
                 api_key=api_key if api_key else "sk-xxx",
                 base_url=base_url,
                 max_retries=3,
                 http_client=http_client,
             )
-            model = OpenAIChatModel(
-                model_name=model_identifier,
-                provider=OpenAIProvider(
-                    openai_client=openai_client,
-                ),
-            )
         elif provider_type == "anthropic":
-            model = AnthropicModel(
-                model_name=model_identifier,
-                provider=AnthropicProvider(
-                    api_key=api_key,
-                    http_client=http_client
-                ),
+            model = Claude(
+                id=model_identifier,
+                api_key=api_key,
+                base_url=base_url,
+                http_client=http_client
             )
         elif provider_type == "google":
-            client_args = {'proxy': proxy.value} if use_proxy and proxy is not None else None
-            async_client_args = {'proxy': proxy.value} if use_proxy and proxy is not None else None
-            http_options = HttpOptions(client_args=client_args, async_client_args=async_client_args) if client_args and async_client_args else None
-            client = Client(
+            # Gemini API key handling
+            model = Gemini(
+                id=model_identifier,
                 api_key=api_key,
-                http_options=http_options,
-            )
-            provider = GoogleProvider(client=client)
-            model = GoogleModel(
-                model_name=model_identifier, 
-                provider=provider,
+                # Google specific configuration can be added here
             )
         elif provider_type == "groq":
-            model = GroqModel(
-                model_name=model_identifier,
-                provider=GroqProvider(
-                    api_key=api_key,
-                    http_client=http_client
-                ),
+            model = Groq(
+                id=model_identifier,
+                api_key=api_key,
+                base_url=base_url,
+                http_client=http_client
             )
         else:
             return None
-        
+
         return model
 
 if __name__ == "__main__":

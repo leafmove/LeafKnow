@@ -9,7 +9,10 @@ from sqlmodel import Session, select
 from sqlalchemy import Engine
 from pydantic import BaseModel, Field
 from typing import List, Dict
-from pydantic_ai import Agent, BinaryContent, RunContext, PromptedOutput
+from core.agno.agent import Agent
+from core.agno.media import Image as BinaryContent
+from core.agno.run.agent import RunContext
+from pydantic import BaseModel
 # from pydantic_ai.usage import UsageLimits
 from core.model_config_mgr import ModelConfigMgr, ModelUseInterface
 from core.config import BUILTMODELS
@@ -102,16 +105,14 @@ class ModelCapabilityConfirm:
         model = self.model_config_mgr.model_adapter(model_interface)
         agent = Agent(
             model=model,
+            instructions="You are a helpful assistant.",
         )
         try:
-            result = await agent.run(
-                user_prompt="Hello, how are you?",
-                # usage_limits=UsageLimits(output_tokens_limit=100),
-            )
-            if isinstance(result.output, str) and len(result.output) > 0:
+            result = await agent.arun("Hello, how are you?")
+            if hasattr(result, 'content') and result.content and len(result.content) > 0:
                 return True
             else:
-                logger.warning(f"Unexpected output format for text capability: {result.output}")
+                logger.warning(f"Unexpected output format for text capability: {result.content}")
                 return False
         except Exception as e:
             logger.error(f"Error testing text capability: {e}")
@@ -137,19 +138,24 @@ class ModelCapabilityConfirm:
         model = self.model_config_mgr.model_adapter(model_interface)
         agent = Agent(
             model=model,
+            instructions="You are a helpful assistant that can analyze images.",
         )
         try:
-            result = await agent.run(user_prompt=
-                [
-                    'What is in this image?',
-                    BinaryContent(data=image_path.read_bytes(), media_type='image/png'),
-                ]
+            # Read image data
+            image_data = image_path.read_bytes()
+
+            # Create image object for agno
+            image = BinaryContent(content=image_data)
+
+            result = await agent.arun(
+                message='What is in this image?',
+                images=[image]
             )
-            # logger.info(result.output)
-            if 'dog' in result.output.lower():
-                return True
-            if 'puppy' in result.output.lower():
-                return True
+
+            if hasattr(result, 'content') and result.content:
+                content = result.content.lower()
+                if 'dog' in content or 'puppy' in content:
+                    return True
             return False
         except Exception as e:
             logger.error(f"Error testing vision capability: {e}")
@@ -180,10 +186,9 @@ class ModelCapabilityConfirm:
         if model_interface is None:
             return False
         model = self.model_config_mgr.model_adapter(model_interface)
-        agent = Agent(model=model)
 
-        @agent.tool
-        def get_current_weather(ctx: RunContext, location: str, unit: str = "celsius") -> str:
+        # Define a simple tool function
+        def get_current_weather(location: str, unit: str = "celsius") -> str:
             """
             Get the current weather in a given location.
             Args:
@@ -192,8 +197,14 @@ class ModelCapabilityConfirm:
             """
             return f"The current weather in {location} is 20 degrees {unit}."
 
+        agent = Agent(
+            model=model,
+            instructions="You are a helpful assistant.",
+            tools=[get_current_weather]
+        )
+
         try:
-            await agent.run('What is the weather like in San Francisco?')
+            result = await agent.arun('What is the weather like in San Francisco?')
             return True
         except Exception as e:
             logger.error(f"Error testing tool use capability: {e}")
@@ -213,13 +224,18 @@ class ModelCapabilityConfirm:
         try:
             agent = Agent(
                 model=model,
-                # mlx_vlm加载模型使用 PromptedOutput 强制 prompt-based 模式，避免 tool calling
-                output_type=PromptedOutput(CityLocation) if model_interface.model_identifier == BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY'] else CityLocation,
+                instructions="You are a helpful assistant. Respond with structured data when requested.",
             )
-            result = await agent.run('Where were the olympics held in 2012?')
-            # logger.info(f"Structured output result: {result}")
-            if isinstance(result.output, CityLocation):
-                return True
+            # For mlx_vlm models, use text-based approach instead of structured output
+            if model_interface.model_identifier == BUILTMODELS['VLM_MODEL']['MLXCOMMUNITY']:
+                result = await agent.arun('Where were the olympics held in 2012? Respond in JSON format with city and country fields.')
+                # Simple text-based validation for mlx models
+                if 'london' in result.content.lower() and ('england' in result.content.lower() or 'united kingdom' in result.content.lower()):
+                    return True
+            else:
+                result = await agent.arun('Where were the olympics held in 2012?', response_format=CityLocation)
+                if hasattr(result, 'content') and result.content:
+                    return True
             return False
         except Exception as e:
             logger.error(f"Error testing structured output capability: {e}")

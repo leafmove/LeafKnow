@@ -4,314 +4,260 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LeafKnow is a knowledge management and learning platform that combines AI-powered chat capabilities with document management and vector search. The application features a desktop frontend built with Tauri + React and a Python FastAPI backend that handles AI model integration, document processing, and knowledge retrieval.
+LeafKnow is a knowledge management application that combines AI-powered chat with document processing and retrieval capabilities. The project consists of:
+
+- **Backend API**: Python FastAPI server with SQLite database
+- **Frontend**: Tauri desktop application with React UI
+- **AI Framework**: Custom Agno-based AI agent system
+- **Document Processing**: Multi-modal vectorization and RAG system
 
 ## Architecture
 
-LeafKnow uses a hybrid architecture with separate backend and frontend processes:
+### Core Components
 
-### Backend (Python FastAPI)
-- **Location**: `core/` directory
-- **Port**: 60000 (default)
-- **Main Technologies**: FastAPI, SQLModel, LanceDB, Pydantic-AI
-- **Key Components**:
-  - `main.py` - FastAPI application entry point
-  - `models_mgr.py` - AI model management (supports multiple AI providers)
-  - `chatsession_mgr.py` - Chat session management
-  - `db_mgr.py` - SQLite database operations
-  - `lancedb_mgr.py` - Vector database for embeddings
-  - `multivector_mgr.py` - Multi-vector search capabilities
-  - `task_mgr.py` - Asynchronous task management
+1. **API Server** ([`core/main.py`](core/main.py))
+   - FastAPI application with SQLite WAL mode optimization
+   - Multi-threaded task processing (normal and high priority)
+   - RESTful APIs for models, chat sessions, and documents
+   - CORS enabled for Tauri frontend
 
-### Frontend (Tauri + React)
-- **Location**: `leaf-know/` directory
-- **Technology Stack**:
-  - Tauri 2.x (Rust backend for desktop app)
-  - React 19.1.0 with TypeScript
-  - Vite for development and building
-  - Tailwind CSS for styling
-  - Radix UI components
-- **Key Features**:
-  - AI chat interface with streaming responses
-  - Document management and upload
-  - Vector search and retrieval
-  - Knowledge graph visualization (@xyflow/react)
+2. **Database Management** ([`core/db_mgr.py`](core/db_mgr.py))
+   - SQLite with WAL mode for concurrent access
+   - Comprehensive schema for tasks, documents, chat sessions, models
+   - Built-in initialization and migration support
+   - Optimized for file monitoring and document processing
 
-### Data Storage
-- **SQLite**: Primary database at `~/Library/Application Support/com.leafmove.leaf-know/sqlite.db`
-- **LanceDB**: Vector database for embeddings and semantic search
+3. **AI Model Management** ([`core/models_mgr.py`](core/models_mgr.py))
+   - Multi-provider model support (OpenAI, Ollama, local models)
+   - Built-in MLX-optimized models for vision and embedding
+   - Streaming chat with Vercel AI SDK v5 compatibility
+   - RAG integration with context-aware responses
+
+4. **Memory Management** ([`core/memory_mgr.py`](core/memory_mgr.py))
+   - Token counting and message trimming
+   - Context window optimization
+   - Tool token calculation
+
+5. **Chat Applications**
+   - Enhanced chat app ([`chat_app_enhanced.py`](chat_app_enhanced.py)) with multi-user support
+   - Basic chat app ([`chat_app.py`](chat_app.py))
+   - Session and agent management with SQLite persistence
+
+### Key Features
+
+- **Multi-modal AI**: Vision + text processing with local Qwen3-VL model
+- **Document Vectorization**: Automatic embedding and chunking
+- **RAG System**: Pin files to sessions for context-aware responses
+- **Task Queue**: Asynchronous processing with priority handling
+- **Model Discovery**: Automatic detection of Ollama and other local models
 
 ## Development Commands
 
-### Starting the Full Application
+### Backend Development
 
-**Method 1: Using Scripts (Recommended)**
 ```bash
-# Terminal 1: Start API backend
-cd core
-./core_standalone.sh  # Automatically reads Tauri config and sets up DB path
+# Start the API server
+python core/main.py --port 60000 --host 127.0.0.1 --db-path autobox_id.db
 
-# Terminal 2: Start frontend application
-cd leaf-know
-./dev.sh
+# Run enhanced chat application
+python chat_app_enhanced.py
+
+# Test database initialization
+python core/db_mgr.py
+
+# Test model management
+python core/models_mgr.py
 ```
-
-**Method 2: Manual Commands**
-```bash
-# Terminal 1: Start API backend
-cd core
-uv sync
-uv run main.py --port 60000 --host 127.0.0.1 --db-path "sqlite.db"
-
-# Terminal 2: Start frontend application
-cd leaf-know
-bun install  # or npm install
-bun tauri dev  # or npm run tauri dev
-```
-
-### Development-Only Commands
-
-**Frontend Web Development (No Tauri)**
-```bash
-cd leaf-know
-bun install
-bun run dev
-# Access at http://localhost:1420
-```
-
-**API Development Only**
-```bash
-cd core
-uv sync
-uv run main.py --port 60000 --host 127.0.0.1
-# API docs at http://127.0.0.1:60000/docs
-# Health check at http://127.0.0.1:60000/health
-```
-
-### Building and Testing
-
-**Build Frontend for Production**
-```bash
-cd leaf-know
-bun run build
-```
-
-**Build Tauri Application**
-```bash
-cd leaf-know
-bun run tauri build
-```
-
-**Run Compatibility Tests**
-```bash
-cd core
-python test_compatibility.py  # Test Python version and dependencies
-```
-
-**Run Single Test**
-```bash
-cd core
-uv run python test_agno.py  # Test agno library imports (if exists)
-```
-
-## Key Technologies
-
-### Backend Dependencies
-- **Python**: >= 3.10 (required)
-- **FastAPI**: Web framework for API
-- **SQLModel**: Database ORM with Pydantic integration
-- **LanceDB**: Vector database for embeddings
-- **Pydantic-AI**: AI agent framework
-- **UV**: Python package manager
-- **Docling**: Document processing (PDF, DOCX, PPTX, etc.)
-- **MarkItDown**: Markdown conversion for various formats
-- **Tiktoken**: Token counting for AI models
-
-### Frontend Dependencies
-- **Node.js**: >= 18.0.0
-- **Bun**: Package manager (can use npm as alternative)
-- **Rust**: >= 1.70.0 (required for Tauri)
-- **React 19.1.0**: UI framework
-- **TypeScript**: Type-safe JavaScript
-- **Tauri 2.x**: Desktop application framework
-- **Vite**: Build tool and dev server
-- **Tailwind CSS 4.x**: Utility-first CSS framework
-- **AI SDK React**: AI model integration
-- **Radix UI**: Component library
-- **Zustand**: State management
-- **React Flow**: Knowledge graph visualization
-
-### AI Integration
-- **Multiple AI Providers**: Supports various AI models through `models_mgr.py`
-- **Built-in Models**: Pre-configured embedding and VLM models in `config.py`
-- **Document Processing**: Multi-format document parsing and extraction
-- **Vector Search**: Semantic search with LanceDB integration
-- **Multi-vector Search**: Advanced search capabilities via `multivector_mgr.py`
-- **Tool Integration**: External AI tool integration via `tool_provider.py`
-
-## Architecture Overview
-
-LeafKnow implements a sophisticated RAG (Retrieval-Augmented Generation) system with the following key architectural components:
-
-### AI Model Management System
-- **`models_mgr.py`**: Central AI model manager supporting multiple providers (OpenAI, Anthropic, local models)
-- **`model_config_mgr.py`**: Model configuration and capability management
-- **`model_capability_confirm.py`**: Model capability validation
-- **`models_builtin.py`**: Built-in model configurations
-
-### Chat and Memory System
-- **`chatsession_mgr.py`**: Chat session lifecycle management
-- **`chatsession_api.py`**: RESTful API for chat operations
-- **`memory_mgr.py`**: Conversation memory and context management
-
-### Document and Vector Search System
-- **`documents_api.py`**: Document upload and processing API
-- **`lancedb_mgr.py`**: Vector database operations with LanceDB
-- **`multivector_mgr.py`**: Advanced multi-vector search capabilities
-- **`search_mgr.py`**: Unified search interface
-
-### Task and Tool Integration
-- **`task_mgr.py`**: Asynchronous task management
-- **`tool_provider.py`**: External AI tool integration
-
-### Data Layer
-- **`db_mgr.py`**: SQLite database operations for persistent storage
-- **`utils.py`**: Shared utilities and helper functions
-
-## Project Structure
-
-```
-LeafKnow/
-├── core/                   # Python FastAPI backend
-│   ├── main.py            # FastAPI application entry point
-│   ├── models_mgr.py      # AI model management (multi-provider support)
-│   ├── model_config_mgr.py # Model configuration and validation
-│   ├── chatsession_*.py   # Chat session management and API
-│   ├── db_mgr.py          # SQLite database operations
-│   ├── lancedb_mgr.py     # Vector database (LanceDB) operations
-│   ├── multivector_mgr.py # Multi-vector search capabilities
-│   ├── search_mgr.py      # Unified search interface
-│   ├── task_mgr.py        # Asynchronous task management
-│   ├── tool_provider.py   # External AI tool integration
-│   ├── documents_api.py   # Document processing and upload API
-│   ├── models_api.py      # AI model API endpoints
-│   ├── memory_mgr.py      # Conversation memory management
-│   ├── config.py          # Built-in model configurations
-│   ├── utils.py           # Shared utilities
-│   ├── core_standalone.sh  # Core startup script (reads Tauri config)
-│   ├── test_compatibility.py # Environment compatibility tests
-│   └── pyproject.toml     # Python dependencies
-├── leaf-know/             # Tauri + React frontend
-│   ├── src/               # React source code
-│   │   ├── App.tsx        # Main application component
-│   │   ├── ai-sdk-chat.tsx # AI chat interface
-│   │   ├── rag-local.tsx  # RAG functionality
-│   │   └── components/    # React components
-│   ├── src-tauri/         # Tauri backend (Rust)
-│   │   ├── src/
-│   │   │   ├── main.rs    # Tauri entry point
-│   │   │   ├── lib.rs     # Main library
-│   │   │   └── api_startup.rs # API startup management
-│   │   └── tauri.conf.json # Tauri configuration
-│   ├── package.json       # Node.js dependencies
-│   ├── vite.config.ts     # Vite configuration
-│   ├── tailwind.config.js # Tailwind CSS configuration
-│   ├── dev.sh             # Frontend startup script
-│   └── build.sh           # Production build script
-├── docs/                  # Project documentation
-├── CLAUDE.md             # This file
-├── README.md             # Project overview
-└── .gitignore            # Git ignore rules
-```
-
-## Important Configuration
-
-### Database Configuration
-- **SQLite Database**: Automatically created at `~/Library/Application Support/com.leafmove.leaf-know/sqlite.db`
-- **LanceDB**: Used for vector embeddings and semantic search
-- **WAL Mode**: SQLite uses WAL mode for better concurrency
-
-### Built-in Model Configuration
-The project includes built-in model configurations in `core/config.py`:
-- **Embedding Models**: Support for LLAMACPPPYTHON and MLXCOMMUNITY backends
-- **VLM (Vision Language Models)**: Qwen3-VL-4B-Instruct with configurable context length
-- **Vector Dimensions**: 768 dimensions for embeddings
-- **Max Output Tokens**: 2048 tokens for VLM responses
-
-### Port Configuration
-- **API Backend**: Port 60000 (configurable via `--port` argument)
-- **Frontend Dev Server**: Port 1420 (Vite default, fixed in Tauri config)
-- **HMR Port**: 1421 for hot module replacement
-
-### Environment Setup Requirements
-1. **Python 3.10+** - Critical requirement, project requires Python 3.10+
-2. **Rust toolchain** - Required for Tauri compilation
-3. **Node.js 18+** - For frontend development
-4. **UV package manager** - For Python dependency management
-5. **Bun (recommended)** - For Node.js dependency management
-6. **jq** - Required for API startup script (reads Tauri config)
-
-### Key Configuration Files
-- `core/pyproject.toml` - Python dependencies and project metadata
-- `leaf-know/package.json` - Node.js dependencies and scripts
-- `leaf-know/src-tauri/tauri.conf.json` - Tauri application configuration
-- `leaf-know/vite.config.ts` - Vite build configuration
-- `core/config.py` - Backend configuration and built-in model settings
-
-## Development Workflow
-
-### Daily Development
-1. Start API backend in one terminal
-2. Start Tauri frontend in another terminal
-3. Make changes to code
-4. Frontend hot-reloads automatically
-5. API changes require restart
-
-### API Development
-- Access interactive API docs at `http://127.0.0.1:60000/docs`
-- Check API health at `http://127.0.0.1:60000/health`
-- API supports CORS for frontend development
-- Model configurations and capabilities can be tested via the API
 
 ### Frontend Development
-- React components hot-reload on save
-- Tauri native APIs available through `@tauri-apps/api`
-- Use `@/` alias for imports from src directory
-- AI chat interface uses streaming responses via AI SDK
 
-### Debugging and Troubleshooting
-- **API**: Check terminal output for logs and errors
-- **Frontend**: Use browser DevTools (F12) in Tauri app
-- **Database**: SQLite database location in config above
-- **Model Issues**: Check model configurations in `config.py` and verify with `test_compatibility.py`
+```bash
+cd leaf-know
 
-## Key Integration Points
+# Install dependencies
+bun install
 
-### Model Integration
-When adding new AI models:
-1. Update `models_builtin.py` with built-in configurations
-2. Modify `models_mgr.py` for provider integration
-3. Update `model_config_mgr.py` for capability validation
-4. Test with `test_compatibility.py`
+# Start development server
+bun run dev
 
-### Document Processing
-Documents are processed through:
-1. **Upload**: Via `documents_api.py`
-2. **Extraction**: Using Docling and MarkItDown libraries
-3. **Embedding**: Through configurable embedding models
-4. **Vector Storage**: In LanceDB via `lancedb_mgr.py`
+# Build for production
+bun run build
 
-### Chat System Flow
-1. **Session Creation**: `chatsession_mgr.py` creates session
-2. **Context Retrieval**: Vector search via `search_mgr.py`
-3. **Model Inference**: Through `models_mgr.py`
-4. **Response Generation**: With memory from `memory_mgr.py`
+# Run Tauri development
+bun run tauri dev
+```
 
-## Notes
+### Testing
 
-- The project requires Python 3.10+ - upgrade required for Python 3.8 systems
-- API startup script automatically reads Tauri configuration for database path
-- Built-in models support both local (LLAMACPPPYTHON, MLXCOMMUNITY) and cloud providers
-- Multi-vector search enables advanced semantic search capabilities
-- The application is designed for desktop deployment with local data storage
-- All AI model configurations are centralized in `config.py` for easy modification
+```bash
+# Run unit tests
+python -m pytest tests/unit/
+
+# Run specific test
+python tests/unit/test_session_features.py
+
+# Run modular tests
+python tests/agno_modular/tests.py
+
+# Run MCP tests
+python tests/mcp/test_mcp_py38.py
+```
+
+## Database Schema
+
+The application uses SQLite with the following key tables:
+
+- **`t_tasks`**: Asynchronous task processing
+- **`t_documents`**: Document metadata and processing status
+- **`t_parent_chunks`**: Document content chunks (text, images, tables)
+- **`t_child_chunks`**: Vectorized content for retrieval
+- **`t_chat_sessions`**: Chat session management
+- **`t_chat_messages`**: Message history with structured content
+- **`t_chat_session_pin_files`**: File pinning for RAG context
+- **`t_model_configurations`**: AI model configurations
+- **`t_capability_assignments`**: Model capability mapping
+
+### Important Database Features
+
+- **WAL Mode**: Enabled for concurrent read/write access
+- **Connection Pooling**: Optimized for multi-threaded access
+- **FTS5 Search**: Full-text search for file metadata
+- **JSON Columns**: Flexible metadata storage
+- **Foreign Keys**: Referential integrity with cascade deletes
+
+## Model Configuration
+
+### Built-in Models
+
+The application includes MLX-optimized models for Apple Silicon:
+
+- **Vision Model**: `mlx-community/Qwen3-VL-4B-Instruct-3bit`
+- **Embedding Model**: `mlx-community/embeddinggemma-300m-4bit`
+
+### Model Providers
+
+Support for multiple model providers:
+
+- **OpenAI**: GPT-4o, GPT-3.5-turbo
+- **Anthropic**: Claude models
+- **Ollama**: Local models via Ollama server
+- **LM Studio**: Local models via LM Studio
+- **OpenRouter**: Various model access
+
+### Configuration
+
+Models are configured via the database `t_model_configurations` table and assigned to capabilities in `t_capability_assignments`. The system supports:
+
+- Text generation
+- Vision processing
+- Structured output
+- Tool use
+- Embedding generation
+
+## File Processing Pipeline
+
+1. **File Discovery**: Rust-based file monitoring with configurable rules
+2. **Screening**: Apply filter rules (extension, filename, folder patterns)
+3. **Document Processing**: Parse with Docling for multi-modal content
+4. **Chunking**: Split content into parent/child chunks
+5. **Vectorization**: Generate embeddings with local models
+6. **Storage**: Store in SQLite + LanceDB for vector search
+
+## API Endpoints
+
+### Models API
+- `GET /models` - List available models
+- `POST /models/{model_id}/test` - Test model configuration
+- `PUT /models/{model_id}/enable` - Enable/disable model
+
+### Chat Sessions API
+- `GET /chat-sessions` - List sessions
+- `POST /chat-sessions` - Create session
+- `PUT /chat-sessions/{session_id}` - Update session
+- `DELETE /chat-sessions/{session_id}` - Delete session
+
+### Chat API
+- `POST /chat-sessions/{session_id}/chat` - Send message (streaming)
+- `GET /chat-sessions/{session_id}/messages` - Get message history
+
+### Documents API
+- `POST /pin-file` - Pin file for RAG context
+- `GET /documents` - List processed documents
+- `GET /documents/{document_id}/chunks` - Get document chunks
+
+## Task Processing
+
+The system uses a priority-based task queue:
+
+- **HIGH**: User-initiated operations (file pinning)
+- **MEDIUM**: Background processing (document vectorization)
+- **LOW**: Maintenance tasks
+
+Tasks are processed by dedicated worker threads with SQLite connection pooling.
+
+## Development Notes
+
+### Database Optimization
+- Uses WAL mode for concurrent access
+- Connection pooling with 5 base connections
+- 30-minute connection recycling
+- Optimized pragmas for performance
+
+### AI Integration
+- Agno framework for agent-based AI
+- Vercel AI SDK v5 compatible streaming
+- Multi-modal support (text + images)
+- Tool integration for external capabilities
+
+### Error Handling
+- Comprehensive logging with structured output
+- Graceful degradation for missing models
+- Database transaction rollback on errors
+- User-friendly error messages
+
+### Performance Considerations
+- Streaming responses for real-time chat
+- Background task processing
+- Token counting for context management
+- Vector search optimization with LanceDB
+
+## Configuration Files
+
+- **Model Configs**: [`model_configs.json`](model_configs.json) - Legacy model configurations
+- **Tauri Config**: [`leaf-know/src-tauri/tauri.conf.json`](leaf-know/src-tauri/tauri.conf.json) - Desktop app configuration
+- **Package Config**: [`leaf-know/package.json`](leaf-know/package.json) - Frontend dependencies
+- **Python Project**: [`core/pyproject.toml`](core/pyproject.toml) - Backend dependencies
+
+## Security Notes
+
+- API keys stored in database (encrypted in production)
+- Local file system access restrictions
+- SQL injection protection via SQLModel
+- CORS configuration for frontend access
+- No remote code execution in AI responses
+
+## Troubleshooting
+
+### Database Issues
+- Check WAL file permissions if database is locked
+- Use `python core/db_mgr.py` to reinitialize schema
+- Monitor connection pool usage in logs
+
+### Model Issues
+- Verify MLX installation for Apple Silicon models
+- Check Ollama server status for local models
+- Test API keys for cloud providers
+- Monitor model download progress in logs
+
+### Performance Issues
+- Monitor task queue backlog via `/task/{task_id}`
+- Check vector database size and indexing
+- Review memory usage for large document sets
+- Adjust connection pool size if needed
+
+## 文件存放规则
+
+- 文档存到docs文件夹中
+
+- 测试文件存放到tests文件夹中
+- sqlite本地数据库文件使用autobox_id.db

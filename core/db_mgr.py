@@ -335,7 +335,7 @@ class ModelProvider(SQLModel, table=True):
     # 显示名称，用户可读的名称
     display_name: str = Field(index=True, unique=True)  # - 预填充名字。- VIP服务从云端拉取。- 用户新增openai-compatible类名称
     source_type: str = Field(default=ModelSourceType.CONFIGURABLE.value)
-    provider_type: str = Field(default="")  # 提供者类型，来自pydantic_ai.providers
+    provider_type: str = Field(default="")  # 提供者类型，来自agno.models
     base_url: str | None = Field(default=None)  # 如果source_type为vip则此项无效，具体值在每个模型配置上
     api_key: str | None = Field(default=None)  # 如果source_type为vip则为加密后的值(密钥暂时写死，实现用户登录后从云端获取)
     # 存放一些特别的provider-specific数据，比如Azure OpenAI的api_version、VertexAI的project_id/location等
@@ -353,7 +353,7 @@ class ModelCapability(str, PyEnum):
     VISION = "vision"
     TOOL_USE = "tool_use"
     STRUCTURED_OUTPUT = "structured_output"
-    WEB_SEARCH = "web_search"  # https://ai.pydantic.dev/api/builtin_tools/#pydantic_ai.builtin_tools.WebSearchTool
+    WEB_SEARCH = "web_search"  # Web search capability for finding information online
     EMBEDDING = "embedding"
     RERANKER = "reranker"
     CODE_GENERATION = "code_generation"
