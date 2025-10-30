@@ -21,7 +21,8 @@ BUILTMODELS = {
 }
 
 # 测试用本地SQLite数据库路径
-TEST_DB_PATH = (Path.home() / "Library/Application Support/com.leafmove.leaf-know/sqlite.db").as_posix()
+PATH = Path(__file__).parent.parent
+TEST_DB_PATH = (PATH / "autobox_id.db").as_posix()
 
 # 单例
 def singleton(cls):
