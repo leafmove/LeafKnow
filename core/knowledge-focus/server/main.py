@@ -5,6 +5,8 @@ import logging
 import time
 import threading
 import signal
+
+sys.path.append(r"D:\Workspace\LeafKnow")
 from datetime import datetime
 from typing import Dict, Any
 from pathlib import Path
@@ -26,7 +28,7 @@ from core.agent.db_mgr import (
 )
 from core.agent.models_mgr import ModelsMgr
 from core.agent.lancedb_mgr import LanceDBMgr
-from core.agent.multivector_mgr import MultiVectorMgr
+# from core.agent.multivector_mgr import MultiVectorMgr
 from core.agent.task_mgr import TaskManager
 # API路由导入将在lifespan函数中进行
 
@@ -118,7 +120,9 @@ def setup_logging(logging_dir: str):
 
     except Exception as e:
         print(f"Failed to set up logging: {e}", file=sys.stderr)
-
+ 
+ 注册API路由 = True
+ 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理器"""
@@ -245,11 +249,11 @@ async def lifespan(app: FastAPI):
         # 注册API路由（在数据库初始化完成后）
         try:
             logger.info("注册API路由...")
-            
+            注册路由  =1 
             # 动态导入API路由
-            from core.models_api import get_router as get_models_router
-            from core.chatsession_api import get_router as get_chatsession_router
-            from core.documents_api import get_router as get_documents_router
+            from core.server.apps.models_app import get_router as get_models_router
+            from core.server.apps.chatsession_app import get_router as get_chatsession_router
+            from core.server.apps.documents_app import get_router as get_documents_router
             
             # 注册各个API路由
             models_router = get_models_router(get_engine=get_engine, base_dir=app.state.db_directory)
@@ -729,7 +733,7 @@ async def pin_file(
             }
         
         # 检查文件类型是否支持
-        from core.multivector_mgr import SUPPORTED_FORMATS
+        from core.agent.multivector_mgr import SUPPORTED_FORMATS
         file_ext = Path(file_path).suffix.split('.')[-1].lower()
         if file_ext not in SUPPORTED_FORMATS:
             logger.warning(f"Pin文件失败，不支持的文件类型: {file_ext}")
@@ -825,8 +829,10 @@ if __name__ == "__main__":
         # 配置uvicorn日志，防止覆盖我们的日志配置
         uvicorn.run(
             app, 
-            host=args.host, 
-            port=args.port, 
+            # host=args.host, 
+            # port=args.port, 
+            host="0.0.0.0", 
+            port=8000,
             log_level="info",
             access_log=False,  # 禁用uvicorn的访问日志，使用我们自己的
             use_colors=False   # 禁用颜色输出，保持日志文件的整洁

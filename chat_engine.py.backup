@@ -1,0 +1,1135 @@
+import os
+import sys
+import platform
+import traceback
+import json
+import pickle
+import datetime
+import base64
+import asyncio
+import threading
+import time
+import uuid
+from threading import Thread
+from typing import List, Dict, Optional, Any, Literal, Callable, Union, Coroutine
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+
+from core.agno.db.sqlite.extended_sqlite import ExtendedSqliteDb
+from core.agno.db.sqlite.config_data import AgentConfig, ToolConfig, ModelConfig
+from core.agno.db.sqlite.runtime_data import RuntimeData, ReasoningStep, ToolCallRecord
+from core.agno.db.schemas.memory import UserMemory as AgentMemory
+from core.agno.session import AgentSession
+from core.agno.db.schemas.evals import EvalRunRecord as AgentEvaluation
+from core.agno.db.schemas.knowledge import KnowledgeRow as AgentKnowledge
+from core.agno.utils.log import log_debug, log_error, log_info
+
+
+try:
+    from core import config
+    from core.utilities import filter_text, get_pil_image
+    from core.agent.model import LLM_CLASS_DICT, LLM_BASEURL, LLM_BACKEND, AGENT_CLASS_DICT
+    from core.agent.memory import Memory
+    from core.config import IMG_PATH, PATH, ICONS, _
+    from core.engine.flow_engine import TextSpeakEngine
+except ImportError:
+    print("未找到核心模块，虚拟默认值替代核心模块导入")
+    # 虚拟默认值替代核心模块导入
+    config = None
+    filter_text = lambda x: x
+    get_pil_image = lambda x: None
+    LLM_CLASS_DICT = {}
+    LLM_BASEURL = ""
+    LLM_BACKEND = ""
+    AGENT_CLASS_DICT = {}
+    Memory = lambda agent=None: type('Memory', (), {
+        'get_memory_blocks': lambda self: [],
+        'connect_agent': lambda self, agent: None,
+        'last_input_content': ""
+    })()
+    IMG_PATH = Path("./images")
+    PATH = Path("./")
+    ICONS = {}
+    _ = lambda x: x
+    TextSpeakEngine = None
+
+class ChatEngine:
+    """
+    聊天引擎类，负责处理聊天逻辑，包括智能体管理、消息处理等
+    集成了数据库存储功能，支持配置数据、运行数据、会话数据、记忆数据、评估数据和知识数据
+    """
+    def __init__(self, config_path: Optional[str] = "autobox_id.db", debug_callback: Optional[Callable] = None, user_token=None):
+        """
+        初始化聊天引擎
+
+        Args:
+            config_path: 配置文件数据库路径或者数据库配置文件路径，支持sqlite、mysql、postgresql三种数据库格式
+            debug_callback: 调试信息回调函数
+            user_token: 用户令牌
+        """
+        pass
+
+    def register_callbacks(self, on_message_update=None, on_message_stream=None,
+                          on_message_complete=None, on_message_image=None):
+        """
+        注册消息回调函数
+
+        Args:
+            on_message_update: 当消息列表更新时的回调
+            on_message_stream: 当消息流更新时的回调
+            on_message_complete: 当消息生成完成时的回调
+            on_message_image: 当生成图片消息时的回调
+        """
+        pass
+
+    def load_config(self, filepath=None, secret_key=None):
+        """
+        加载配置数据库
+
+        Args:
+            filepath: 配置文件路径
+            secret_key: 加密密钥(未实现)
+
+        Returns:
+            配置字典
+        """
+        pass
+
+    def save_config(self, filepath=None, secret_key=None):
+        """
+        保存配置到数据库
+
+        Args:
+            filepath: 配置文件路径
+            secret_key: 加密密钥(未实现)
+        """
+        pass
+
+    def _convert_agent_config_to_nested_format(self, agent_config):
+        """将数据库中的AgentConfig转换为嵌套格式"""
+        pass
+
+    def _create_default_config(self):
+        """创建默认配置"""
+        pass
+
+    def load_agents(self):
+        """加载所有智能体"""
+        try:
+            # 从配置文件加载智能体
+            for agent_name, agent_config in self.agent_configs.items():
+                self.create_agent(agent_name, agent_config)
+
+            # 从数据库加载智能体配置
+            agent_configs_db = self.db.get_agent_configs(user_id=self.user_token)
+            for agent_config in agent_configs_db:
+                if agent_config.name not in self.agents:
+                    config_dict = self._convert_agent_config_to_nested_format(agent_config)
+                    self.agent_configs[agent_config.name] = config_dict
+                    self.create_agent(agent_config.name, config_dict)
+
+            log_info(f"Loaded {len(self.agents)} agents")
+        except Exception as e:
+            log_error(f"Error loading agents: {e}")
+
+    def select_agent_by_name(self, agent_name):
+        """
+        通过名称选择智能体
+
+        Args:
+            agent_name: 智能体名称
+
+        Returns:
+            是否选择成功
+        """
+        if agent_name not in self.agents:
+            log_error(f"Agent not found: {agent_name}")
+            return False
+
+        try:
+            self.current_agent = self.agents[agent_name]
+            self.current_agent_name = agent_name
+
+            # 创建新的会话
+            self.current_session_id = self._create_new_session(agent_name)
+
+            # 保存当前选择
+            self.save_config()
+
+            log_info(f"Selected agent: {agent_name}")
+            return True
+        except Exception as e:
+            log_error(f"Error selecting agent {agent_name}: {e}")
+            return False
+
+    def create_llm_from_dict(self, agent_dict):
+        """
+        根据字典创建LLM实例
+
+        Args:
+            agent_dict: 包含LLM配置的字典
+
+        Returns:
+            LLM实例
+        """
+        try:
+            model_config = agent_dict.get('model', {})
+            model_name = model_config.get('name', 'gpt-3.5-turbo')
+            model_provider = model_config.get('provider', 'openai')
+
+            if model_provider not in LLM_CLASS_DICT:
+                log_error(f"Unsupported model provider: {model_provider}")
+                return None
+
+            llm_class = LLM_CLASS_DICT[model_provider]
+
+            # 准备LLM配置参数
+            llm_kwargs = {
+                'model_name': model_name,
+                'api_base': LLM_BASEURL,
+                **model_config.get('kwargs', {})
+            }
+
+            llm = llm_class(**llm_kwargs)
+            log_debug(f"Created LLM: {model_name} ({model_provider})")
+            return llm
+        except Exception as e:
+            log_error(f"Error creating LLM: {e}")
+            return None
+
+    def create_agent(self, agent_name, agent_dict):
+        """
+        根据配置创建智能体
+
+        Args:
+            agent_name: 智能体名称
+            agent_dict: 智能体配置字典
+
+        Returns:
+            智能体实例
+        """
+        try:
+            # 创建LLM实例
+            llm = self.create_llm_from_dict(agent_dict)
+            if not llm:
+                log_error(f"Failed to create LLM for agent: {agent_name}")
+                return None
+
+            # 获取智能体类型
+            agent_type = agent_dict.get('type', 'text')
+            if agent_type not in AGENT_CLASS_DICT:
+                log_error(f"Unsupported agent type: {agent_type}")
+                return None
+
+            agent_class = AGENT_CLASS_DICT[agent_type]
+
+            # 创建记忆实例
+            memory = Memory(agent=None)
+
+            # 准备智能体配置参数
+            agent_kwargs = {
+                'name': agent_name,
+                'llm': llm,
+                'memory': memory,
+                'instructions': agent_dict.get('instructions', ''),
+                'tools': agent_dict.get('tools', []),
+                **agent_dict.get('kwargs', {})
+            }
+
+            # 创建智能体实例
+            agent = agent_class(**agent_kwargs)
+            self.agents[agent_name] = agent
+
+            # 保存智能体配置到数据库
+            agent_config = AgentConfig.from_dict({
+                'agent_id': f"{agent_name}_{self.user_token}_{int(time.time())}",
+                'name': agent_name,
+                'model_id': agent_dict.get('model', {}).get('name'),
+                'model_provider': agent_dict.get('model', {}).get('provider'),
+                'model_kwargs': agent_dict.get('model', {}).get('kwargs'),
+                'instructions': agent_dict.get('instructions'),
+                'tools': agent_dict.get('tools'),
+                'knowledge': agent_dict.get('knowledge'),
+                'memory': agent_dict.get('memory'),
+                'guardrails': agent_dict.get('guardrails'),
+                'metadata': agent_dict.get('metadata'),
+                'user_id': self.user_token
+            })
+            self.db.upsert_agent_config(agent_config)
+
+            log_info(f"Created agent: {agent_name} ({agent_type})")
+            return agent
+        except Exception as e:
+            log_error(f"Error creating agent {agent_name}: {e}")
+            return None
+
+    def update_agent_settings(self, agent_config):
+        """
+        更新智能体设置
+
+        Args:
+            agent_config: 新的智能体配置
+
+        Returns:
+            更新后的智能体对象
+        """
+        try:
+            agent_name = agent_config.get('name')
+            if not agent_name:
+                log_error("Agent name is required for update")
+                return None
+
+            # 更新配置
+            self.agent_configs[agent_name] = agent_config
+
+            # 重新创建智能体
+            agent = self.create_agent(agent_name, agent_config)
+            if not agent:
+                return None
+
+            # 如果是当前智能体，更新当前选择
+            if self.current_agent_name == agent_name:
+                self.current_agent = agent
+
+            # 保存配置
+            self.save_config()
+
+            log_info(f"Updated agent settings: {agent_name}")
+            return agent
+        except Exception as e:
+            log_error(f"Error updating agent settings: {e}")
+            return None
+
+    def delete_agent_by_name(self, agent_name):
+        """
+        根据名称删除智能体
+
+        Args:
+            agent_name: 智能体名称
+
+        Returns:
+            成功与否
+        """
+        try:
+            if agent_name not in self.agents:
+                log_error(f"Agent not found: {agent_name}")
+                return False
+
+            # 删除智能体实例
+            del self.agents[agent_name]
+
+            # 删除配置
+            if agent_name in self.agent_configs:
+                del self.agent_configs[agent_name]
+
+            # 从数据库删除配置
+            agent_configs_db = self.db.get_agent_configs(user_id=self.user_token)
+            for agent_config in agent_configs_db:
+                if agent_config.name == agent_name:
+                    self.db.delete_agent_config(agent_config.agent_id)
+                    break
+
+            # 如果是当前智能体，清空选择
+            if self.current_agent_name == agent_name:
+                self.current_agent = None
+                self.current_agent_name = None
+
+            # 保存配置
+            self.save_config()
+
+            log_info(f"Deleted agent: {agent_name}")
+            return True
+        except Exception as e:
+            log_error(f"Error deleting agent {agent_name}: {e}")
+            return False
+
+    def get_available_models(self, llm):
+        """
+        获取当前LLM支持的模型列表
+
+        Args:
+            llm: LLM实例
+
+        Returns:
+            模型ID列表和当前选中的模型
+        """
+        try:
+            if hasattr(llm, 'get_available_models'):
+                models = llm.get_available_models()
+                current_model = getattr(llm, 'model_name', None)
+                return models, current_model
+            else:
+                # 默认模型列表
+                default_models = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo']
+                current_model = getattr(llm, 'model_name', default_models[0])
+                return default_models, current_model
+        except Exception as e:
+            log_error(f"Error getting available models: {e}")
+            return [], None
+
+    def update_agent_model(self, new_model):
+        """
+        更新智能体的模型
+
+        Args:
+            new_model: 新模型名称
+
+        Returns:
+            成功与否
+        """
+        try:
+            if not self.current_agent or not self.current_agent_name:
+                log_error("No agent selected")
+                return False
+
+            # 更新配置
+            if self.current_agent_name in self.agent_configs:
+                self.agent_configs[self.current_agent_name]['model']['name'] = new_model
+
+            # 重新创建LLM实例
+            agent_dict = self.agent_configs[self.current_agent_name]
+            new_llm = self.create_llm_from_dict(agent_dict)
+            if new_llm:
+                self.current_agent.llm = new_llm
+
+            # 保存配置
+            self.save_config()
+
+            log_info(f"Updated agent model: {self.current_agent_name} -> {new_model}")
+            return True
+        except Exception as e:
+            log_error(f"Error updating agent model: {e}")
+            return False
+
+    def reset_agent(self):
+        """
+        重置当前智能体的对话
+
+        Returns:
+            成功与否
+        """
+        try:
+            if not self.current_agent:
+                log_error("No agent selected")
+                return False
+
+            # 重置智能体记忆
+            if hasattr(self.current_agent, 'memory'):
+                self.current_agent.memory.clear()
+
+            # 清空消息历史
+            self.messages = []
+
+            # 创建新的会话
+            self.current_session_id = self._create_new_session(self.current_agent_name)
+
+            log_info(f"Reset agent: {self.current_agent_name}")
+            return True
+        except Exception as e:
+            log_error(f"Error resetting agent: {e}")
+            return False
+
+    def load_agent_conversation(self, callbacks=None):
+        """
+        加载智能体的历史对话
+
+        Args:
+            callbacks: 回调函数字典
+        """
+        try:
+            if not self.current_agent_name:
+                log_error("No agent selected")
+                return
+
+            # 从数据库加载历史运行数据
+            runtime_list = self.db.get_runtime_data_list(
+                agent_id=self.current_agent_name,
+                user_id=self.user_token,
+                limit=100
+            )
+
+            # 转换为消息格式
+            self.messages = []
+            for runtime_data in runtime_list:
+                if runtime_data.input_data:
+                    self.messages.append({
+                        'role': 'user',
+                        'content': runtime_data.input_data.get('content', ''),
+                        'timestamp': runtime_data.created_at
+                    })
+                if runtime_data.output_data:
+                    self.messages.append({
+                        'role': 'assistant',
+                        'content': runtime_data.output_data.get('content', ''),
+                        'timestamp': runtime_data.created_at
+                    })
+
+            log_info(f"Loaded {len(self.messages)} messages for agent: {self.current_agent_name}")
+
+            # 触发回调
+            if self.on_message_update:
+                self.on_message_update(self.messages)
+        except Exception as e:
+            log_error(f"Error loading agent conversation: {e}")
+
+    def process_message(self, message_content, message_type="text"):
+        """
+        处理发送的消息
+
+        Args:
+            message_content: 消息内容
+            message_type: 消息类型
+
+        Returns:
+            消息处理结果
+        """
+        if not self.current_agent:
+            log_error("No agent selected")
+            return None
+
+        if self.processing:
+            log_error("Already processing a message")
+            return None
+
+        try:
+            self.processing = True
+
+            # 创建运行数据记录
+            run_id = str(uuid.uuid4())
+            self.current_run_id = run_id
+            start_time = time.time()
+
+            # 记录用户消息
+            user_message = {
+                'role': 'user',
+                'content': message_content,
+                'type': message_type,
+                'timestamp': int(time.time())
+            }
+            self.messages.append(user_message)
+
+            # 创建运行数据
+            runtime_data = RuntimeData.from_dict({
+                'run_id': run_id,
+                'session_id': self.current_session_id,
+                'agent_id': self.current_agent_name,
+                'user_id': self.user_token,
+                'input_data': {'content': message_content, 'type': message_type},
+                'status': 'running',
+                'created_at': int(time.time())
+            })
+            self.db.upsert_runtime_data(runtime_data)
+
+            # 触发消息更新回调
+            if self.on_message_update:
+                self.on_message_update(self.messages)
+
+            # 根据智能体类型处理消息
+            result = None
+            agent_config = self.agent_configs.get(self.current_agent_name, {})
+            agent_type = agent_config.get('type', 'text')
+
+            if agent_type == 'text':
+                result = self._handle_text_agent(message_content, [])
+            elif agent_type == 'image_create':
+                result = self._handle_image_create_agent(message_content)
+            elif agent_type == 'image_analysis':
+                result = self._handle_image_analysis_agent(message_content)
+            elif agent_type == 'autobox':
+                result = self._handle_autobox_agent(message_content, [])
+            else:
+                log_error(f"Unsupported agent type: {agent_type}")
+                result = {'content': f"Unsupported agent type: {agent_type}"}
+
+            # 记录助手回复
+            assistant_message = {
+                'role': 'assistant',
+                'content': result.get('content', ''),
+                'type': result.get('type', 'text'),
+                'timestamp': int(time.time())
+            }
+            self.messages.append(assistant_message)
+
+            # 更新运行数据
+            execution_time = time.time() - start_time
+            runtime_data.output_data = result
+            runtime_data.reasoning_steps = result.get('reasoning_steps', [])
+            runtime_data.tool_calls = result.get('tool_calls', [])
+            runtime_data.metrics = result.get('metrics', {})
+            runtime_data.status = 'completed'
+            runtime_data.execution_time = execution_time
+            runtime_data.updated_at = int(time.time())
+            self.db.upsert_runtime_data(runtime_data)
+
+            # 触发消息完成回调
+            if self.on_message_complete:
+                self.on_message_complete(assistant_message)
+
+            log_info(f"Message processed: {run_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error processing message: {e}")
+
+            # 更新运行数据为失败状态
+            if self.current_run_id:
+                self.db.update_runtime_data_status(
+                    self.current_run_id,
+                    'failed',
+                    str(e)
+                )
+
+            return {'content': f"Error processing message: {str(e)}"}
+        finally:
+            self.processing = False
+            self.current_run_id = None
+
+    def _create_new_session(self, agent_name):
+        """创建新的会话记录"""
+        try:
+            session_id = str(uuid.uuid4())
+            session = AgentSession.from_dict({
+                'session_id': session_id,
+                'session_name': f"Session {len(self.sessions) + 1}",
+                'agent_id': agent_name,
+                'user_id': self.user_token,
+                'session_data': {
+                    'start_time': int(time.time()),
+                    'agent_name': agent_name,
+                    'status': 'active'
+                },
+                'created_at': int(time.time())
+            })
+
+            self.db.upsert_session(session)
+            self.sessions.append(session)
+
+            log_debug(f"Created new session: {session_id}")
+            return session_id
+        except Exception as e:
+            log_error(f"Error creating new session: {e}")
+            return None
+
+    def _handle_text_agent(self, message_content, memoryblocks):
+        """处理文本类型智能体"""
+        try:
+            if not self.current_agent:
+                return {'content': 'No agent selected'}
+
+            # 准备消息历史
+            messages = []
+            for msg in self.messages[-20:]:  # 最近20条消息
+                messages.append({
+                    'role': msg['role'],
+                    'content': msg['content']
+                })
+
+            # 调用智能体生成回复
+            response = self.current_agent.run(message_content, messages)
+
+            # 记录推理步骤
+            reasoning_steps = []
+            if hasattr(self.current_agent, 'reasoning_trace'):
+                reasoning_steps = self.current_agent.reasoning_trace
+
+            # 记录工具调用
+            tool_calls = []
+            if hasattr(self.current_agent, 'tool_calls'):
+                tool_calls = self.current_agent.tool_calls
+
+            result = {
+                'content': response,
+                'type': 'text',
+                'reasoning_steps': reasoning_steps,
+                'tool_calls': tool_calls,
+                'metrics': {
+                    'tokens': getattr(self.current_agent, 'token_count', 0),
+                    'response_time': time.time()
+                }
+            }
+
+            return result
+        except Exception as e:
+            log_error(f"Error in text agent: {e}")
+            return {'content': f"Error: {str(e)}"}
+
+    def _handle_image_create_agent(self, message_content):
+        """处理图像创建智能体"""
+        try:
+            # 这里应该调用图像生成API
+            # 简化实现，返回占位符结果
+            result = {
+                'content': 'Image generation not implemented yet',
+                'type': 'image',
+                'image_data': None
+            }
+            return result
+        except Exception as e:
+            log_error(f"Error in image create agent: {e}")
+            return {'content': f"Error: {str(e)}"}
+
+    def _get_file_list(self):
+        """获取文件列表，具体实现需要在子类中提供"""
+        return []
+
+    def _handle_image_analysis_agent(self, message_content):
+        """处理图像分析智能体"""
+        try:
+            # 获取文件列表
+            files = self._get_file_list()
+
+            # 这里应该调用图像分析API
+            result = {
+                'content': 'Image analysis not implemented yet',
+                'type': 'text',
+                'files': files
+            }
+            return result
+        except Exception as e:
+            log_error(f"Error in image analysis agent: {e}")
+            return {'content': f"Error: {str(e)}"}
+
+    def _update_streaming_text(self):
+        """更新文本流"""
+        # 这里应该实现文本流更新逻辑
+        if self.on_message_stream:
+            self.on_message_stream({"type": "text", "content": "", "streaming": True})
+
+    def _update_generate_image(self):
+        """更新生成的图像"""
+        # 这里应该实现图像生成更新逻辑
+        if self.on_message_image:
+            self.on_message_image({"type": "image", "generating": True})
+
+    def _update_analysis_image(self):
+        """更新图像分析结果"""
+        # 这里应该实现图像分析更新逻辑
+        if self.on_message_image:
+            self.on_message_image({"type": "analysis", "analyzing": True})
+
+    def _update_running_result(self):
+        """更新运行结果"""
+        # 这里应该实现运行结果更新逻辑
+        pass
+
+    def _schedule_next_update(self, function, delay):
+        """
+        调度下一次更新
+        此方法需要在GUI层实现，这里提供一个默认实现
+
+        Args:
+            function: 要执行的函数
+            delay: 延迟时间(毫秒)
+        """
+        # 使用线程池延迟执行
+        if delay > 0:
+            self.executor.submit(function)
+        else:
+            function()
+
+    def _on_finish_callback(self, message=None):
+        """
+        完成任务后的回调
+
+        Args:
+            message: 可选的消息
+        """
+        log_debug("Processing finished")
+        if message and self.on_message_complete:
+            self.on_message_complete(message)
+
+    def toggle_voice(self):
+        """
+        切换语音引擎状态
+
+        Returns:
+            新的状态
+        """
+        try:
+            self.voice_enabled = not self.voice_enabled
+            if self.voice_enabled and self.voice_engine:
+                self.voice_engine.start()
+            else:
+                self.voice_engine.stop()
+
+            log_info(f"Voice engine toggled: {self.voice_enabled}")
+            return self.voice_enabled
+        except Exception as e:
+            log_error(f"Error toggling voice: {e}")
+            return False
+
+    def set_websearch_enabled(self, enabled):
+        """
+        设置是否启用网络搜索
+
+        Args:
+            enabled: 是否启用
+        """
+        self.websearch_enabled = enabled
+        log_info(f"Web search enabled: {enabled}")
+
+    def execute_code(self, code):
+        #TODO: 添加安全的代码执行逻辑
+        """
+        执行Python代码
+
+        Args:
+            code: Python代码
+
+        Returns:
+            执行结果
+        """
+        try:
+            # 记录代码执行
+            execution_id = str(uuid.uuid4())
+
+            # 这里应该实现安全的代码执行
+            # 简化实现，仅返回占位符结果
+            result = {
+                'output': 'Code execution not implemented yet',
+                'error': None,
+                'execution_id': execution_id
+            }
+
+            log_debug(f"Code executed: {execution_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error executing code: {e}")
+            return {'output': None, 'error': str(e), 'execution_id': None}
+
+    def stop_processing(self):
+        """
+        停止当前处理
+
+        Returns:
+            操作结果
+        """
+        try:
+            if self.processing:
+                self.processing = False
+
+                # 更新运行数据状态
+                if self.current_run_id:
+                    self.db.update_runtime_data_status(
+                        self.current_run_id,
+                        'cancelled',
+                        'Processing stopped by user'
+                    )
+
+                log_info("Processing stopped by user")
+                return True
+            return False
+        except Exception as e:
+            log_error(f"Error stopping processing: {e}")
+            return False
+
+    def import_messages(self, file_path):
+        """
+        导入消息
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            操作结果
+        """
+        try:
+            if not os.path.exists(file_path):
+                return {'success': False, 'error': 'File not found'}
+
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            imported_messages = data.get('messages', [])
+            self.messages.extend(imported_messages)
+
+            # 保存到数据库作为运行数据
+            for msg in imported_messages:
+                runtime_data = RuntimeData.from_dict({
+                    'run_id': str(uuid.uuid4()),
+                    'session_id': self.current_session_id,
+                    'agent_id': self.current_agent_name,
+                    'user_id': self.user_token,
+                    'input_data': msg if msg.get('role') == 'user' else None,
+                    'output_data': msg if msg.get('role') == 'assistant' else None,
+                    'status': 'completed',
+                    'created_at': msg.get('timestamp', int(time.time()))
+                })
+                self.db.upsert_runtime_data(runtime_data)
+
+            log_info(f"Imported {len(imported_messages)} messages from {file_path}")
+            return {'success': True, 'count': len(imported_messages)}
+        except Exception as e:
+            log_error(f"Error importing messages: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def export_messages(self, file_path):
+        """
+        导出消息
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            操作结果
+        """
+        try:
+            export_data = {
+                'messages': self.messages,
+                'agent': self.current_agent_name,
+                'session_id': self.current_session_id,
+                'exported_at': int(time.time()),
+                'version': '1.0'
+            }
+
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+
+            log_info(f"Exported {len(self.messages)} messages to {file_path}")
+            return {'success': True, 'count': len(self.messages)}
+        except Exception as e:
+            log_error(f"Error exporting messages: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def create_new_agent(self, template_agent_name, new_config):
+        """
+        创建新的智能体
+
+        Args:
+            template_agent_name: 模板智能体名称
+            new_config: 新配置
+
+        Returns:
+            创建结果
+        """
+        try:
+            # 获取模板配置
+            template_config = self.agent_configs.get(template_agent_name)
+            if not template_config:
+                return {'success': False, 'error': 'Template agent not found'}
+
+            # 合并配置
+            final_config = {**template_config, **new_config}
+            agent_name = final_config.get('name')
+
+            # 创建智能体
+            agent = self.create_agent(agent_name, final_config)
+            if agent:
+                self.agent_configs[agent_name] = final_config
+                self.save_config()
+                log_info(f"Created new agent: {agent_name}")
+                return {'success': True, 'agent_name': agent_name}
+            else:
+                return {'success': False, 'error': 'Failed to create agent'}
+        except Exception as e:
+            log_error(f"Error creating new agent: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def edit_agent(self, agent_name, new_config):
+        """
+        编辑智能体
+
+        Args:
+            agent_name: 智能体名称
+            new_config: 新配置
+
+        Returns:
+            编辑结果
+        """
+        try:
+            if agent_name not in self.agent_configs:
+                return {'success': False, 'error': 'Agent not found'}
+
+            # 更新配置
+            updated_config = {**self.agent_configs[agent_name], **new_config}
+
+            # 如果名称改变了，需要特殊处理
+            if 'name' in new_config and new_config['name'] != agent_name:
+                # 删除旧智能体
+                self.delete_agent_by_name(agent_name)
+                # 创建新智能体
+                return self.create_new_agent(agent_name, updated_config)
+            else:
+                # 更新现有智能体
+                agent = self.update_agent_settings(updated_config)
+                if agent:
+                    self.save_config()
+                    log_info(f"Edited agent: {agent_name}")
+                    return {'success': True, 'agent_name': agent_name}
+                else:
+                    return {'success': False, 'error': 'Failed to update agent'}
+        except Exception as e:
+            log_error(f"Error editing agent: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def delete_agent(self, agent_name):
+        """
+        删除智能体
+
+        Args:
+            agent_name: 智能体名称
+
+        Returns:
+            删除结果
+        """
+        try:
+            success = self.delete_agent_by_name(agent_name)
+            if success:
+                self.save_config()
+                return {'success': True, 'agent_name': agent_name}
+            else:
+                return {'success': False, 'error': 'Failed to delete agent'}
+        except Exception as e:
+            log_error(f"Error deleting agent: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # 知识数据管理方法
+    def add_knowledge(self, knowledge_data):
+        """
+        添加知识数据
+
+        Args:
+            knowledge_data: 知识数据
+
+        Returns:
+            添加结果
+        """
+        try:
+            knowledge = AgentKnowledge.from_dict({
+                'id': str(uuid.uuid4()),
+                'name': knowledge_data.get('name', ''),
+                'content': knowledge_data.get('content', ''),
+                'metadata': knowledge_data.get('metadata', {}),
+                'agent_id': self.current_agent_name,
+                'user_id': self.user_token,
+                'created_at': int(time.time())
+            })
+
+            self.db.upsert_knowledge(knowledge)
+            log_info(f"Added knowledge: {knowledge.name}")
+            return {'success': True, 'knowledge_id': knowledge.id}
+        except Exception as e:
+            log_error(f"Error adding knowledge: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def get_knowledge(self, knowledge_id=None):
+        """
+        获取知识数据
+
+        Args:
+            knowledge_id: 知识ID，为None时获取所有知识
+
+        Returns:
+            知识数据列表
+        """
+        try:
+            if knowledge_id:
+                knowledge = self.db.get_knowledge(knowledge_id)
+                return [knowledge] if knowledge else []
+            else:
+                # 获取当前智能体的所有知识
+                knowledge_list = self.db.get_knowledge_list(
+                    agent_id=self.current_agent_name,
+                    user_id=self.user_token
+                )
+                return knowledge_list
+        except Exception as e:
+            log_error(f"Error getting knowledge: {e}")
+            return []
+
+    # 记忆数据管理方法
+    def add_memory(self, memory_data):
+        """
+        添加记忆数据
+
+        Args:
+            memory_data: 记忆数据
+
+        Returns:
+            添加结果
+        """
+        try:
+            memory = AgentMemory.from_dict({
+                'memory_id': str(uuid.uuid4()),
+                'agent_id': self.current_agent_name,
+                'user_id': self.user_token,
+                'memory': memory_data.get('content', ''),
+                'created_at': int(time.time())
+            })
+
+            self.db.upsert_memory(memory)
+            log_info(f"Added memory: {memory.memory_id}")
+            return {'success': True, 'memory_id': memory.memory_id}
+        except Exception as e:
+            log_error(f"Error adding memory: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # 评估数据管理方法
+    def add_evaluation(self, eval_data):
+        """
+        添加评估数据
+
+        Args:
+            eval_data: 评估数据
+
+        Returns:
+            添加结果
+        """
+        try:
+            evaluation = AgentEvaluation.from_dict({
+                'run_id': eval_data.get('run_id', str(uuid.uuid4())),
+                'eval_type': eval_data.get('type', 'manual'),
+                'agent_id': self.current_agent_name,
+                'user_id': self.user_token,
+                'eval_data': eval_data.get('data', {}),
+                'created_at': int(time.time())
+            })
+
+            self.db.upsert_evaluation(evaluation)
+            log_info(f"Added evaluation: {evaluation.run_id}")
+            return {'success': True, 'eval_id': evaluation.run_id}
+        except Exception as e:
+            log_error(f"Error adding evaluation: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def get_agent_statistics(self):
+        """
+        获取当前智能体的统计信息
+
+        Returns:
+            统计信息字典
+        """
+        try:
+            if not self.current_agent_name:
+                return {}
+
+            stats = self.db.get_agent_statistics(self.current_agent_name)
+            return stats
+        except Exception as e:
+            log_error(f"Error getting agent statistics: {e}")
+            return {}
+
+    def get_database_statistics(self):
+        """
+        获取数据库统计信息
+
+        Returns:
+            数据库统计信息
+        """
+        try:
+            stats = self.db.get_database_statistics()
+            return stats
+        except Exception as e:
+            log_error(f"Error getting database statistics: {e}")
+            return {}
+
+    def __del__(self):
+        """析构函数，清理资源"""
+        try:
+            if hasattr(self, 'executor'):
+                self.executor.shutdown(wait=True)
+            if hasattr(self, 'voice_engine'):
+                self.voice_engine.stop()
+            log_info("ChatEngine resources cleaned up")
+        except Exception as e:
+            log_error(f"Error during cleanup: {e}")

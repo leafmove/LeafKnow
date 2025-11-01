@@ -257,7 +257,8 @@ Tasks are processed by dedicated worker threads with SQLite connection pooling.
 
 ## 文件存放规则
 
-- 文档存到docs文件夹中
-
-- 测试文件存放到tests文件夹中
+- 针对每个py文件撰写一个说明文档，说明文档介绍该模块的使用方法，说明文档按照py文件的相对目录结构，以docs文件夹为根文件夹，存到对应的子文件夹中
+- 针对每个新生成的py文件，生成一个测试文件，构建常见的虚拟值和测试值，对功能进行单元测试，测试文件存放到tests文件夹中，以test_XXXX来命名
 - sqlite本地数据库文件使用autobox_id.db
+- 写python代码时，使用python3.8支持的语法进行编写
+- 

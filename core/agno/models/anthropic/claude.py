@@ -1,8 +1,7 @@
 import json
-from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, AsyncIterator
 
 from pydantic import BaseModel
 

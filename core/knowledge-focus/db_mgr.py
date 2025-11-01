@@ -19,7 +19,9 @@ from sqlalchemy import Engine
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import List, Dict, Any, Union, Optional
-import os
+import os,sys
+
+sys.path.append(r"D:\Workspace\LeafKnow")
 from core.config import BUILTMODELS
     
 # 任务状态枚举

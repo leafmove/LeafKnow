@@ -61,7 +61,7 @@ class ToolProvider:
             logger.error(f"获取会话工具失败: {e}")
             return []
     
-    def get_session_scenario_system_prompt(self, session_id: int) -> str | None:
+    def get_session_scenario_system_prompt(self, session_id: int) -> Optional[str]:
         '''如果session_id对应的会话有配置场景，则返回场景的system_prompt'''
         try:
             with Session(self.engine) as session:

@@ -1,7 +1,7 @@
 from core.config import singleton
 import multiprocessing
 from core.agent.db_mgr import TaskStatus, TaskResult, Task, TaskPriority, TaskType
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import threading
 import logging
 from core.utils import monitor_parent
@@ -62,7 +62,7 @@ class TaskManager:
             
             return task
     
-    def get_task(self, task_id: int) -> Task | None:
+    def get_task(self, task_id: int) -> Optional[Task]:
         """根据ID获取任务
         
         Args:
@@ -87,7 +87,7 @@ class TaskManager:
             statement = select(Task).limit(limit)
             return session.exec(statement).all()
     
-    def get_next_task(self) -> Task | None:
+    def get_next_task(self) -> Optional[Task]:
         """获取下一个待处理的任务，优先处理优先级高的任务"""
         with Session(self.engine) as session:
             return session.exec(
@@ -96,7 +96,7 @@ class TaskManager:
             .order_by(Task.priority, Task.created_at)
         ).first()
     
-    def get_and_lock_next_high_priority_task(self) -> Task | None:
+    def get_and_lock_next_high_priority_task(self) -> Optional[Task]:
         """原子地获取并锁定下一个高优先级任务"""
         with Session(self.engine) as session:
             # 查找第一个HIGH优先级的PENDING任务
@@ -120,7 +120,7 @@ class TaskManager:
             else:
                 return None
     
-    def get_and_lock_next_task(self) -> Task | None:
+    def get_and_lock_next_task(self) -> Optional[Task]:
         """原子地获取并锁定下一个待处理的任务（排除已被锁定的任务）"""
         with Session(self.engine) as session:
             # 查找第一个PENDING状态的任务
@@ -283,7 +283,7 @@ class TaskManager:
         return pool.apply_async(monitored_func, args=args, callback=callback)
     
     
-    def get_latest_completed_task(self, task_type: str) -> Task | None:
+    def get_latest_completed_task(self, task_type: str) -> Optional[Task]:
         """获取最新的已完成任务
         
         Args:
@@ -304,7 +304,7 @@ class TaskManager:
             logger.error(f"获取最新已完成任务失败: {e}")
             return None
     
-    def get_latest_running_task(self, task_type: str) -> Task | None:
+    def get_latest_running_task(self, task_type: str) -> Optional[Task]:
         """获取最新的运行中任务
         
         Args:
@@ -325,7 +325,7 @@ class TaskManager:
             logger.error(f"获取最新运行任务失败: {e}")
             return None
     
-    def get_latest_task(self, task_type: str) -> Task | None:
+    def get_latest_task(self, task_type: str) -> Optional[Task]:
         """获取最新的任务，无论状态如何
         
         Args:

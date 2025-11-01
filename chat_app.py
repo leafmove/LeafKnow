@@ -22,7 +22,7 @@ from typing import Optional, List, Dict, Any
 import json
 
 # 导入核心模块
-from core.agent.chat_core_mgr import (
+from core.agent.chat_engine import (
     DatabaseManager, UserManager, AgentManager, SessionManager,
     ConversationManager, AgentConfig, DatabaseType,
     Agent, OpenAIChat, OPENAI_AVAILABLE, OpenRouter, OPENROUTER_AVAILABLE,

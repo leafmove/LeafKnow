@@ -47,3 +47,15 @@ coverage/
 
 # Claude Code 设置文件
 .claude/settings.local.json
+
+#数据库文件
+autobox_id.db
+*.db
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 测试文件
+*.pyc

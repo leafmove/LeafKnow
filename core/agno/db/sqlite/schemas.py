@@ -1,6 +1,6 @@
 """Table schemas and related utils used by the SqliteDb class"""
 
-from typing import Any
+from typing import Any,Dict
 
 try:
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String

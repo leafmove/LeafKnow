@@ -3,7 +3,7 @@ import json
 import httpx
 from sqlmodel import Session, select
 from sqlalchemy import Engine
-from typing import List, Dict
+from typing import List, Dict, Union, Optional
 from core.agent.db_mgr import (
     # ModelSourceType, 
     ModelProvider, 
@@ -15,7 +15,7 @@ from core.agent.db_mgr import (
 from pydantic import BaseModel
 from core.agno.models.openai.chat import OpenAIChat
 from core.agno.models.anthropic.claude import Claude
-from core.agno.models.google.gemini import Gemini
+# from core.agno.models.google.gemini import Gemini
 from core.agno.models.groq.groq import Groq
 import logging
 
@@ -45,7 +45,7 @@ class ModelConfigMgr:
         with Session(self.engine) as session:
             return session.exec(select(ModelConfiguration).where(ModelConfiguration.provider_id == provider_id)).all()
 
-    def get_proxy_value(self) -> SystemConfig | None:
+    def get_proxy_value(self) -> Optional[SystemConfig]:
         with Session(self.engine) as session:
             return session.exec(select(SystemConfig).where(SystemConfig.key == "proxy")).first()
 
@@ -127,7 +127,7 @@ class ModelConfigMgr:
             print(f"Error deleting provider {provider_id}: {e}")
             return False
 
-    def update_provider_config(self, id: int, display_name: str, base_url: str, api_key: str, extra_data_json: Dict, is_active: bool, use_proxy: bool = False) -> ModelProvider | None:
+    def update_provider_config(self, id: int, display_name: str, base_url: str, api_key: str, extra_data_json: Dict, is_active: bool, use_proxy: bool = False) -> Optional[ModelProvider]:
         """Updates a specific provider's configuration."""
         with Session(self.engine) as session:
             provider: ModelProvider = session.exec(select(ModelProvider).where(ModelProvider.id == id)).first()
@@ -444,7 +444,7 @@ class ModelConfigMgr:
             session.commit()
             return True
 
-    def get_model_for_global_capability(self, capability: ModelCapability) -> ModelConfiguration | None:
+    def get_model_for_global_capability(self, capability: ModelCapability) -> Optional[ModelConfiguration]:
         """获取全局指定ModelCapability能力的模型配置"""
         with Session(self.engine) as session:
             assignment = session.exec(
@@ -456,7 +456,7 @@ class ModelConfigMgr:
                 ).first()
         return None
     
-    def get_spec_model_config(self, capability: ModelCapability) -> ModelUseInterface | None:
+    def get_spec_model_config(self, capability: ModelCapability) -> Optional[ModelUseInterface]:
         """取得全局指定能力的模型的model使用参数"""
         model_config: ModelConfiguration = self.get_model_for_global_capability(capability)
         if model_config is None:
@@ -545,13 +545,13 @@ class ModelConfigMgr:
                 base_url=base_url,
                 http_client=http_client
             )
-        elif provider_type == "google":
-            # Gemini API key handling
-            model = Gemini(
-                id=model_identifier,
-                api_key=api_key,
-                # Google specific configuration can be added here
-            )
+        # elif provider_type == "google":
+        #     # Gemini API key handling
+        #     model = Gemini(
+        #         id=model_identifier,
+        #         api_key=api_key,
+        #         # Google specific configuration can be added here
+        #     )
         elif provider_type == "groq":
             model = Groq(
                 id=model_identifier,
